@@ -11,7 +11,8 @@ async def check_health() -> HealthResponse:
     """
     Health check endpoint returning system status and service readiness.
     """
-    ffmpeg_installed = shutil.which(settings.FFMPEG_BIN_PATH) is not None
+    ffmpeg_path = settings.get_ffmpeg_path()
+    ffmpeg_installed = shutil.which(ffmpeg_path) is not None or (Path(ffmpeg_path).exists() and Path(ffmpeg_path).is_file())
     workspace_accessible = settings.WORKSPACE_DATA_DIR.exists() and settings.WORKSPACE_DATA_DIR.is_dir()
 
     return HealthResponse(

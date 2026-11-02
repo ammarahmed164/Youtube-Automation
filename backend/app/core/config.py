@@ -46,6 +46,17 @@ class Settings(BaseSettings):
     # Audio & Rendering
     PIPER_BIN_PATH: str = "piper"
     FFMPEG_BIN_PATH: str = "ffmpeg"
+
+    def get_ffmpeg_path(self) -> str:
+        """Returns the resolved path to FFmpeg executable (system or bundled imageio_ffmpeg binary)."""
+        if self.FFMPEG_BIN_PATH and self.FFMPEG_BIN_PATH != "ffmpeg":
+            if Path(self.FFMPEG_BIN_PATH).exists():
+                return self.FFMPEG_BIN_PATH
+        try:
+            import imageio_ffmpeg
+            return imageio_ffmpeg.get_ffmpeg_exe()
+        except Exception:
+            return self.FFMPEG_BIN_PATH or "ffmpeg"
     
     # YouTube OAuth
     YOUTUBE_CLIENT_ID: str = ""
