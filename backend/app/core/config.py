@@ -28,8 +28,17 @@ class Settings(BaseSettings):
     SUPABASE_URL: str = ""
     SUPABASE_ANON_KEY: str = ""
     
-    # AI Providers
+    # AI Providers (Multi-key pool support)
     GEMINI_API_KEY: str = ""
+    GEMINI_API_KEYS: str = ""
+
+    def get_gemini_keys(self) -> List[str]:
+        keys = []
+        if self.GEMINI_API_KEYS:
+            keys.extend([k.strip() for k in self.GEMINI_API_KEYS.split(",") if k.strip()])
+        elif self.GEMINI_API_KEY:
+            keys.append(self.GEMINI_API_KEY.strip())
+        return keys
     
     # Visual Assets
     PEXELS_API_KEY: str = ""
