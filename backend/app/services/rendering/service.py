@@ -109,8 +109,11 @@ class RenderingService(BaseRenderingService):
         fps: int = 25
     ) -> None:
         """
-        Renders an individual scene clip synced to its audio duration.
-        Applies Ken Burns zoompan effect to still images.
+        Renders an individual scene clip synced to its audio duration with:
+        1. Multi-Cut B-Roll (switches visuals every 4-6s for dynamic pacing)
+        2. Varied Cinematic Camera Moves (Dramatic Push-in, Pan L-to-R, Pull-back, Pan R-to-L)
+        3. Color Grading & Soft Film Vignette
+        4. Background Ambient Space Drone layer ducked under narration
         """
         duration = scene.actual_audio_duration_seconds or scene.estimated_duration_seconds or 5.0
         output_clip_path.parent.mkdir(parents=True, exist_ok=True)
@@ -125,38 +128,136 @@ class RenderingService(BaseRenderingService):
                 "-stream_loop", "-1", "-i", str(visual_path),
                 "-i", str(audio_path),
                 "-vf", vf,
-                "-c:v", "libx264", "-preset", "fast", "-crf", "22",
+                "-c:v", "libx264", "-preset", "ultrafast", "-crf", "22",
                 "-c:a", "aac", "-b:a", "192k",
                 "-pix_fmt", "yuv420p",
                 "-t", f"{duration:.3f}",
                 str(output_clip_path)
             ]
-        else:
-            # Image asset: apply gentle Ken Burns zoompan
-            frames = int(fps * duration)
-            if scene.scene_order % 2 == 1:
-                # Odd scenes: slow zoom in
-                vf = f"zoompan=z='min(zoom+0.001,1.12)':d={frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1920x1080:fps={fps}"
-            else:
-                # Even scenes: slow zoom out
-                vf = f"zoompan=z='max(1.12-0.001*on,1.0)':d={frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1920x1080:fps={fps}"
+            res = subprocess.run(cmd, capture_output=True, text=True)
+            if res.returncode != 0:
+                raise RuntimeError(f"FFmpeg failed rendering video scene {scene.scene_id_str}: {res.stderr[-300:]}")
+            return
 
-            cmd = [
+        # Multi-cut Image Asset Engine
+        visuals_dir = visual_path.parent
+        cuts = [visual_path]
+        b_roll_candidates = sorted(visuals_dir.glob(f"{scene.scene_id_str}_b*.jpg"))
+        for b in b_roll_candidates:
+            if b.exists() and b.stat().st_size > 5000:
+                cuts.append(b)
+
+        # Temp directory for this scene's sub-cuts
+        sub_dir = output_clip_path.parent / f"sub_{scene.scene_id_str}"
+        sub_dir.mkdir(parents=True, exist_ok=True)
+
+        num_cuts = len(cuts)
+        sub_clips = []
+        concat_lines = []
+
+        if num_cuts > 1:
+            cut_duration = duration / num_cuts
+            cut_frames = max(1, int(fps * cut_duration))
+
+            # 4 Rotating camera motions with film vignette & color grade
+            motion_bank = [
+                f"zoompan=z='min(zoom+0.002,1.25)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={cut_frames}:s=1920x1080:fps={fps},vignette=PI/5,eq=contrast=1.08:saturation=1.12",
+                f"zoompan=z='1.15':x='(on/{cut_frames})*(iw-iw/zoom)':y='ih/2-(ih/zoom/2)':d={cut_frames}:s=1920x1080:fps={fps},vignette=PI/5,eq=contrast=1.08:saturation=1.12",
+                f"zoompan=z='max(1.25-0.002*on,1.0)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={cut_frames}:s=1920x1080:fps={fps},vignette=PI/5,eq=contrast=1.08:saturation=1.12",
+                f"zoompan=z='1.15':x='(1-(on/{cut_frames}))*(iw-iw/zoom)':y='ih/2-(ih/zoom/2)':d={cut_frames}:s=1920x1080:fps={fps},vignette=PI/5,eq=contrast=1.08:saturation=1.12"
+            ]
+
+            for idx, img_p in enumerate(cuts):
+                sub_out = sub_dir / f"cut_{idx+1}.mp4"
+                vf = motion_bank[idx % len(motion_bank)]
+                sub_cmd = [
+                    ffmpeg_bin, "-y",
+                    "-loop", "1", "-i", str(img_p),
+                    "-vf", vf,
+                    "-c:v", "libx264", "-preset", "ultrafast", "-crf", "22",
+                    "-pix_fmt", "yuv420p",
+                    "-t", f"{cut_duration:.3f}",
+                    str(sub_out)
+                ]
+                r_sub = subprocess.run(sub_cmd, capture_output=True, text=True)
+                if r_sub.returncode != 0:
+                    logger.warning(f"Sub-cut {idx+1} failed, falling back: {r_sub.stderr[-200:]}")
+                else:
+                    sub_clips.append(sub_out)
+                    concat_lines.append(f"file '{sub_out.resolve().as_posix()}'")
+        else:
+            # Single image: split into 2 contrasting motions so camera never stays static
+            half_dur = duration / 2.0
+            half_frames = max(1, int(fps * half_dur))
+            
+            # Half 1: Dramatic push-in
+            sub1 = sub_dir / "half_1.mp4"
+            vf1 = f"zoompan=z='min(zoom+0.002,1.25)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={half_frames}:s=1920x1080:fps={fps},vignette=PI/5,eq=contrast=1.08:saturation=1.12"
+            subprocess.run([
+                ffmpeg_bin, "-y", "-loop", "1", "-i", str(visual_path),
+                "-vf", vf1, "-c:v", "libx264", "-preset", "ultrafast", "-crf", "22",
+                "-pix_fmt", "yuv420p", "-t", f"{half_dur:.3f}", str(sub1)
+            ], capture_output=True)
+
+            # Half 2: Cinematic Pan Left-to-Right
+            sub2 = sub_dir / "half_2.mp4"
+            vf2 = f"zoompan=z='1.15':x='(on/{half_frames})*(iw-iw/zoom)':y='ih/2-(ih/zoom/2)':d={half_frames}:s=1920x1080:fps={fps},vignette=PI/5,eq=contrast=1.08:saturation=1.12"
+            subprocess.run([
+                ffmpeg_bin, "-y", "-loop", "1", "-i", str(visual_path),
+                "-vf", vf2, "-c:v", "libx264", "-preset", "ultrafast", "-crf", "22",
+                "-pix_fmt", "yuv420p", "-t", f"{(duration - half_dur):.3f}", str(sub2)
+            ], capture_output=True)
+
+            if sub1.exists() and sub2.exists():
+                concat_lines = [
+                    f"file '{sub1.resolve().as_posix()}'",
+                    f"file '{sub2.resolve().as_posix()}'"
+                ]
+
+        # Assemble cuts manifest & mix with audio narration + ambient space drone
+        cuts_manifest = sub_dir / "manifest.txt"
+        with open(cuts_manifest, "w", encoding="utf-8") as f:
+            f.write("\n".join(concat_lines) + "\n")
+
+        # Mix Narration (1.0 volume) with Subtle Cosmic Ambient Drone (0.12 volume)
+        filter_complex = (
+            "[1:a]volume=1.0[narration];"
+            "[2:a]volume=0.12[ambient];"
+            "[narration][ambient]amix=inputs=2:duration=first:dropout_transition=2[aout]"
+        )
+
+        stitch_cmd = [
+            ffmpeg_bin, "-y",
+            "-f", "concat", "-safe", "0", "-i", str(cuts_manifest),
+            "-i", str(audio_path),
+            "-f", "lavfi", "-i", "aevalsrc=0.03*sin(2*PI*55*t)+0.02*sin(2*PI*110*t)+0.01*sin(2*PI*165*t):s=44100",
+            "-filter_complex", filter_complex,
+            "-map", "0:v", "-map", "[aout]",
+            "-c:v", "copy",
+            "-c:a", "aac", "-b:a", "192k",
+            "-t", f"{duration:.3f}",
+            str(output_clip_path)
+        ]
+
+        res = subprocess.run(stitch_cmd, capture_output=True, text=True)
+        if res.returncode != 0:
+            logger.error(f"FFmpeg multi-cut scene render error for {scene.scene_id_str}: {res.stderr}")
+            # Fallback to direct single cut if complex stitch encounters unexpected stream issue
+            direct_vf = f"zoompan=z='min(zoom+0.0015,1.2)':d={int(fps*duration)}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1920x1080:fps={fps},vignette=PI/5,eq=contrast=1.08:saturation=1.12"
+            fallback_cmd = [
                 ffmpeg_bin, "-y",
                 "-loop", "1", "-i", str(visual_path),
                 "-i", str(audio_path),
-                "-vf", vf,
-                "-c:v", "libx264", "-preset", "fast", "-crf", "22",
+                "-vf", direct_vf,
+                "-c:v", "libx264", "-preset", "ultrafast", "-crf", "22",
                 "-c:a", "aac", "-b:a", "192k",
                 "-pix_fmt", "yuv420p",
                 "-t", f"{duration:.3f}",
                 str(output_clip_path)
             ]
-
-        res = subprocess.run(cmd, capture_output=True, text=True)
-        if res.returncode != 0:
-            logger.error(f"FFmpeg scene render error for {scene.scene_id_str}: {res.stderr}")
-            raise RuntimeError(f"FFmpeg failed rendering scene {scene.scene_id_str}: {res.stderr[-300:]}")
+            res_fb = subprocess.run(fallback_cmd, capture_output=True, text=True)
+            if res_fb.returncode != 0:
+                raise RuntimeError(f"FFmpeg failed rendering scene {scene.scene_id_str}: {res_fb.stderr[-300:]}")
 
     @classmethod
     def render_project(cls, project_id: str, job_id: str) -> Dict[str, Any]:
@@ -349,7 +450,8 @@ class RenderingService(BaseRenderingService):
                 "version_number": version_number,
                 "file_path": rel_file_path,
                 "file_checksum": checksum,
-                "duration_seconds": total_duration
+                "duration_seconds": total_duration,
+                "video_version_id": video_version.id
             }
 
         except Exception as e:
