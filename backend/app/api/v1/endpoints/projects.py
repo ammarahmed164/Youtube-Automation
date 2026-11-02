@@ -49,3 +49,4 @@ def delete_project(project_id: str, db: Session = Depends(get_db)):
             detail=f"Project with ID '{project_id}' not found."
         )
     return None
+

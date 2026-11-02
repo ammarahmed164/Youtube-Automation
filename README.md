@@ -67,7 +67,8 @@ npm run dev
 
 - [x] **Phase 1: Environment Inspection, Setup & Architecture** (COMPLETED)
 - [x] **Phase 2: Database, Backend Foundation & Project Management** (COMPLETED)
-- [ ] **Phase 3: Dashboard UX & Documentary Creation Wizard** (NEXT)
+- [x] **Phase 3: Dashboard UX & Documentary Creation Wizard** (COMPLETED)
+- [ ] **Phase 4: Gemini Research, Scripting & Scene Planning** (NEXT)
 - [ ] **Phase 4: Gemini Research, Scripting & Scene Planning**
 - [ ] **Phase 5: Voiceover (Piper TTS) & Visual Assets**
 - [ ] **Phase 6: FFmpeg Rendering & Subtitle Synchronization**

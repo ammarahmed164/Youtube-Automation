@@ -97,3 +97,4 @@ class GenerationJob(Base):
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
     project = relationship("Project", back_populates="generation_jobs")
+

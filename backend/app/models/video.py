@@ -93,3 +93,4 @@ class YouTubeUpload(Base):
     error_message = Column(Text, nullable=True)
     
     created_at = Column(DateTime(timezone=True), default=utc_now)
+

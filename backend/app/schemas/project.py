@@ -62,3 +62,4 @@ class ProjectResponse(BaseModel):
     settings: Optional[ProjectSettingResponse] = None
 
     model_config = {"from_attributes": True}
+

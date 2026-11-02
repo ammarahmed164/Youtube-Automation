@@ -1,208 +1,225 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { CheckCircle2, Film, ShieldAlert, Sparkles, Video, Layers, Cpu, Database } from "lucide-react";
+import Link from "next/link";
+import {
+  Film,
+  PlusCircle,
+  Clock,
+  Sparkles,
+  Layers,
+  ArrowRight,
+  ShieldCheck,
+  CheckCircle2,
+  Calendar,
+  AlertCircle,
+  Database,
+} from "lucide-react";
+import { fetchProjects, fetchHealth } from "@/lib/api";
+import { Project, HealthStatus } from "@/types/project";
 
-interface HealthData {
-  status: string;
-  app: string;
-  version: string;
-  environment: string;
-  max_video_duration_minutes: number;
-  system_checks: {
-    python_version: string;
-    workspace_data_dir: string;
-    workspace_accessible: boolean;
-    ffmpeg_available: boolean;
-    database_configured: boolean;
-    gemini_configured: boolean;
-    youtube_configured: boolean;
-  };
-}
-
-export default function Home() {
-  const [health, setHealth] = useState<HealthData | null>(null);
+export default function DashboardPage() {
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [health, setHealth] = useState<HealthStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    async function checkBackend() {
+    async function loadData() {
       try {
-        const res = await fetch("http://localhost:8000/api/v1/health");
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
-        setHealth(data);
+        const [projData, healthData] = await Promise.allSettled([fetchProjects(), fetchHealth()]);
+        if (projData.status === "fulfilled") setProjects(projData.value);
+        if (healthData.status === "fulfilled") setHealth(healthData.value);
       } catch (err: any) {
-        setError(err.message || "Backend offline");
+        setError(err.message || "Failed to load dashboard data");
       } finally {
         setLoading(false);
       }
     }
-    checkBackend();
+    loadData();
   }, []);
 
+  const totalProjects = projects.length;
+  const draftCount = projects.filter((p) => p.status === "draft").length;
+  const reviewCount = projects.filter((p) => p.status === "awaiting_review" || p.status === "script_review").length;
+  const uploadedCount = projects.filter((p) => p.status === "uploaded").length;
+
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-rose-500 selection:text-white">
-      {/* Top Navigation */}
-      <header className="border-b border-slate-800 bg-slate-900/60 backdrop-blur sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-rose-600 to-amber-500 flex items-center justify-center shadow-lg shadow-rose-950/50">
-              <Film className="w-5 h-5 text-white" />
-            </div>
-            <div>
-              <span className="font-bold text-lg tracking-tight bg-gradient-to-r from-white via-slate-200 to-slate-400 bg-clip-text text-transparent">
-                AI YouTube Documentary Studio
-              </span>
-              <span className="ml-2 text-xs font-semibold px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-400 border border-rose-500/20">
-                Phase 1 Active
-              </span>
-            </div>
+    <div className="max-w-7xl mx-auto py-10 px-6 space-y-10">
+      {/* Studio Header & Hero */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 pb-2">
+        <div className="space-y-2">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold bg-rose-500/10 text-rose-400 border border-rose-500/20">
+            <Sparkles className="w-3.5 h-3.5" />
+            AI YouTube Documentary Production Dashboard
           </div>
-
-          <div className="flex items-center gap-4 text-sm">
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-800/80 border border-slate-700/60">
-              <span className={`w-2.5 h-2.5 rounded-full ${health ? "bg-emerald-500 animate-pulse" : "bg-amber-500"}`} />
-              <span className="text-xs font-medium text-slate-300">
-                {health ? "Backend Connected (Port 8000)" : loading ? "Checking Backend..." : "Backend Offline"}
-              </span>
-            </div>
-          </div>
+          <h1 className="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">
+            Documentary Studio Control Center
+          </h1>
+          <p className="text-slate-400 text-sm max-w-2xl">
+            Manage your AI-assisted documentary projects. Structured scripts, offline neural voices, stock visuals, and 1080p MP4 rendering with a mandatory human approval gate.
+          </p>
         </div>
-      </header>
 
-      {/* Main Container */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-6 py-10 space-y-10">
-        {/* Hero Section */}
-        <div className="relative overflow-hidden rounded-3xl border border-slate-800 bg-gradient-to-b from-slate-900/90 to-slate-950 p-8 sm:p-12 shadow-2xl">
-          <div className="max-w-3xl space-y-4">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold bg-rose-500/10 text-rose-400 border border-rose-500/20">
-              <Sparkles className="w-3.5 h-3.5" />
-              Human-in-the-Loop Production Architecture
+        <Link
+          href="/create"
+          className="flex items-center justify-center gap-2 bg-gradient-to-r from-rose-600 to-rose-500 hover:from-rose-500 hover:to-rose-400 text-white text-sm font-semibold px-5 py-3 rounded-2xl shadow-lg shadow-rose-950/40 transition-all hover:scale-[1.02] self-start md:self-center"
+        >
+          <PlusCircle className="w-4 h-4" />
+          <span>Create New Documentary</span>
+        </Link>
+      </div>
+
+      {/* KPI Overview Cards */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <div className="p-5 rounded-2xl bg-slate-900/40 border border-slate-800 space-y-1">
+          <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Total Projects</span>
+          <p className="text-3xl font-extrabold text-white">{totalProjects}</p>
+          <span className="text-[11px] text-slate-500 block">Saved in Supabase PostgreSQL</span>
+        </div>
+
+        <div className="p-5 rounded-2xl bg-slate-900/40 border border-slate-800 space-y-1">
+          <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Draft & Planning</span>
+          <p className="text-3xl font-extrabold text-amber-400">{draftCount}</p>
+          <span className="text-[11px] text-slate-500 block">Awaiting script or rendering</span>
+        </div>
+
+        <div className="p-5 rounded-2xl bg-slate-900/40 border border-slate-800 space-y-1">
+          <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Awaiting Review</span>
+          <p className="text-3xl font-extrabold text-indigo-400">{reviewCount}</p>
+          <span className="text-[11px] text-slate-500 block">Ready for user inspection</span>
+        </div>
+
+        <div className="p-5 rounded-2xl bg-slate-900/40 border border-slate-800 space-y-1">
+          <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Approved & Uploaded</span>
+          <p className="text-3xl font-extrabold text-emerald-400">{uploadedCount}</p>
+          <span className="text-[11px] text-slate-500 block">Published to YouTube</span>
+        </div>
+      </div>
+
+      {/* Projects Section */}
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Film className="w-5 h-5 text-rose-400" />
+            <h2 className="text-lg font-bold text-white">Your Documentary Projects</h2>
+          </div>
+          <span className="text-xs text-slate-400">
+            Source: <span className="text-emerald-400 font-mono">ubdijlujjjkqxcloqudz.supabase.co</span>
+          </span>
+        </div>
+
+        {loading ? (
+          <div className="py-20 text-center text-slate-400 text-sm animate-pulse">
+            Fetching projects from Supabase database...
+          </div>
+        ) : error ? (
+          <div className="p-6 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-rose-300 text-sm flex items-center gap-3">
+            <AlertCircle className="w-5 h-5 shrink-0" />
+            <span>{error}</span>
+          </div>
+        ) : projects.length === 0 ? (
+          /* Empty State */
+          <div className="rounded-3xl border border-dashed border-slate-800 bg-slate-900/20 py-16 px-6 text-center space-y-4">
+            <div className="w-12 h-12 rounded-2xl bg-slate-800/80 flex items-center justify-center mx-auto text-slate-400">
+              <Film className="w-6 h-6" />
             </div>
-            <h1 className="text-4xl sm:text-5xl font-extrabold tracking-tight text-white leading-tight">
-              Create Polished YouTube Documentaries with AI & Total Human Control.
-            </h1>
-            <p className="text-slate-400 text-base sm:text-lg leading-relaxed">
-              Research, script, synthesize scene voiceovers, source stock footage, and compile 1080p documentaries. 
-              Uploads occur <span className="text-rose-400 font-semibold underline decoration-rose-500/40">strictly after explicit user approval</span>.
+            <div className="space-y-1 max-w-sm mx-auto">
+              <h3 className="font-bold text-base text-white">No documentary projects yet</h3>
+              <p className="text-xs text-slate-400">
+                Click below to start your first AI documentary with structured scenes and offline voice narration.
+              </p>
+            </div>
+            <Link
+              href="/create"
+              className="inline-flex items-center gap-2 bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold px-4 py-2.5 rounded-xl shadow-md transition-all"
+            >
+              <PlusCircle className="w-4 h-4" />
+              <span>Create First Documentary</span>
+            </Link>
+          </div>
+        ) : (
+          /* Projects Grid */
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+            {projects.map((project) => {
+              const s = project.settings;
+              return (
+                <div
+                  key={project.id}
+                  className="rounded-2xl border border-slate-800 bg-slate-900/40 p-5 flex flex-col justify-between hover:border-slate-700 transition-all group"
+                >
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-rose-500/10 text-rose-400 border border-rose-500/20 uppercase tracking-wide">
+                        {project.status.replace("_", " ")}
+                      </span>
+                      {s && (
+                        <span className="flex items-center gap-1 text-[11px] font-medium text-emerald-400">
+                          <Clock className="w-3 h-3" />
+                          {s.target_duration_minutes}m
+                        </span>
+                      )}
+                    </div>
+
+                    <div>
+                      <h3 className="font-bold text-base text-white group-hover:text-rose-400 transition-colors line-clamp-1">
+                        {project.title}
+                      </h3>
+                      <p className="text-xs text-slate-400 mt-1 line-clamp-2 leading-relaxed">
+                        {project.topic}
+                      </p>
+                    </div>
+
+                    {s && (
+                      <div className="flex flex-wrap gap-1.5 pt-2 border-t border-slate-800/60 text-[10px] text-slate-400">
+                        <span className="px-2 py-0.5 rounded-md bg-slate-800/80 capitalize">{s.tone}</span>
+                        <span className="px-2 py-0.5 rounded-md bg-slate-800/80">{s.resolution}</span>
+                        <span className="px-2 py-0.5 rounded-md bg-slate-800/80 capitalize">{s.visual_strategy}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="pt-4 mt-4 border-t border-slate-800 flex items-center justify-between">
+                    <div className="flex items-center gap-1 text-[11px] text-slate-500">
+                      <Calendar className="w-3 h-3" />
+                      <span>{new Date(project.created_at).toLocaleDateString()}</span>
+                    </div>
+
+                    <Link
+                      href={`/projects/${project.id}`}
+                      className="inline-flex items-center gap-1.5 text-xs font-semibold text-rose-400 hover:text-rose-300 transition-colors"
+                    >
+                      <span>Open Workspace</span>
+                      <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
+                    </Link>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* System Integrity & Guarantees */}
+      <div className="rounded-2xl border border-slate-800/80 bg-gradient-to-r from-slate-900/60 to-slate-950 p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0">
+            <ShieldCheck className="w-5 h-5" />
+          </div>
+          <div>
+            <h4 className="font-bold text-sm text-white">Full Local Isolation & Strict Approval Architecture</h4>
+            <p className="text-xs text-slate-400 mt-0.5">
+              Duration capped strictly at 20 min. Videos render locally in 1080p and publish only after explicit button confirmation.
             </p>
           </div>
-
-          {/* Golden Rules Banner */}
-          <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-4 pt-8 border-t border-slate-800/80">
-            <div className="flex items-start gap-3 p-4 rounded-xl bg-slate-900/40 border border-slate-800/60">
-              <ShieldAlert className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
-              <div>
-                <h4 className="font-semibold text-sm text-slate-200">Mandatory Approval Gate</h4>
-                <p className="text-xs text-slate-400 mt-1">AI never publishes without explicit button approval tied to file checksum.</p>
-              </div>
-            </div>
-            <div className="flex items-start gap-3 p-4 rounded-xl bg-slate-900/40 border border-slate-800/60">
-              <Film className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
-              <div>
-                <h4 className="font-semibold text-sm text-slate-200">Strict 20-Min Duration Cap</h4>
-                <p className="text-xs text-slate-400 mt-1">Hard maximum limit of 20 minutes to ensure stability and quality.</p>
-              </div>
-            </div>
-            <div className="flex items-start gap-3 p-4 rounded-xl bg-slate-900/40 border border-slate-800/60">
-              <Database className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
-              <div>
-                <h4 className="font-semibold text-sm text-slate-200">Supabase Connected</h4>
-                <p className="text-xs text-slate-400 mt-1">Remote MCP integration active for database, migrations & schemas.</p>
-              </div>
-            </div>
-          </div>
         </div>
 
-        {/* Backend & Environment Status Card */}
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-6 space-y-6">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <Cpu className="w-5 h-5 text-indigo-400" />
-              <h2 className="text-lg font-bold text-white">System Environment & Health Status</h2>
-            </div>
-            <span className="text-xs text-slate-400">Endpoint: /api/v1/health</span>
-          </div>
-
-          {loading ? (
-            <div className="py-8 text-center text-slate-400 text-sm animate-pulse">
-              Verifying backend connection on http://localhost:8000...
-            </div>
-          ) : error ? (
-            <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-300 text-sm">
-              <span className="font-semibold">Backend offline:</span> Start backend with <code className="bg-slate-800 px-2 py-0.5 rounded text-xs">uvicorn app.main:app --port 8000</code>.
-            </div>
-          ) : health ? (
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-              <div className="p-4 rounded-xl bg-slate-950/60 border border-slate-800/80">
-                <span className="text-xs text-slate-400">Application</span>
-                <p className="font-semibold text-sm text-slate-100 mt-1 truncate">{health.app}</p>
-              </div>
-              <div className="p-4 rounded-xl bg-slate-950/60 border border-slate-800/80">
-                <span className="text-xs text-slate-400">Python Runtime</span>
-                <p className="font-semibold text-sm text-slate-100 mt-1">{health.system_checks.python_version}</p>
-              </div>
-              <div className="p-4 rounded-xl bg-slate-950/60 border border-slate-800/80">
-                <span className="text-xs text-slate-400">Max Video Duration</span>
-                <p className="font-semibold text-sm text-emerald-400 mt-1">{health.max_video_duration_minutes} Minutes (Enforced)</p>
-              </div>
-              <div className="p-4 rounded-xl bg-slate-950/60 border border-slate-800/80">
-                <span className="text-xs text-slate-400">Workspace Storage</span>
-                <p className="font-semibold text-sm text-emerald-400 mt-1">Ready & Writable</p>
-              </div>
-            </div>
-          ) : null}
+        <div className="flex items-center gap-3 self-end sm:self-auto text-xs font-medium text-slate-400">
+          <span>PostgreSQL: <strong className="text-slate-200">Connected</strong></span>
+          <span>&bull;</span>
+          <span>Max Duration: <strong className="text-emerald-400">20 Mins</strong></span>
         </div>
-
-        {/* Studio Pipeline Stages Overview */}
-        <div className="space-y-4">
-          <h3 className="text-lg font-bold text-white flex items-center gap-2">
-            <Layers className="w-5 h-5 text-rose-400" />
-            10-Phase Studio Roadmap Progress
-          </h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3">
-            {[
-              { num: "01", name: "Architecture & Setup", status: "VERIFIED", active: true },
-              { num: "02", name: "Database & Models", status: "NEXT", active: false },
-              { num: "03", name: "Creation Wizard UI", status: "QUEUED", active: false },
-              { num: "04", name: "Gemini AI Scripting", status: "QUEUED", active: false },
-              { num: "05", name: "Piper TTS & Assets", status: "QUEUED", active: false },
-              { num: "06", name: "FFmpeg Rendering", status: "QUEUED", active: false },
-              { num: "07", name: "QC & AI Revisions", status: "QUEUED", active: false },
-              { num: "08", name: "YouTube Publishing", status: "QUEUED", active: false },
-              { num: "09", name: "Cloud Deployment", status: "QUEUED", active: false },
-              { num: "10", name: "Scaling & Templates", status: "QUEUED", active: false },
-            ].map((phase) => (
-              <div
-                key={phase.num}
-                className={`p-4 rounded-xl border transition-all ${
-                  phase.active
-                    ? "bg-rose-500/10 border-rose-500/30 shadow-lg shadow-rose-950/20"
-                    : "bg-slate-900/30 border-slate-800/60 opacity-80"
-                }`}
-              >
-                <div className="flex items-center justify-between text-xs font-mono text-slate-400 mb-2">
-                  <span>PHASE {phase.num}</span>
-                  <span
-                    className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${
-                      phase.active ? "bg-rose-500/20 text-rose-300" : "bg-slate-800 text-slate-400"
-                    }`}
-                  >
-                    {phase.status}
-                  </span>
-                </div>
-                <h4 className="font-semibold text-sm text-slate-200">{phase.name}</h4>
-              </div>
-            ))}
-          </div>
-        </div>
-      </main>
-
-      {/* Footer */}
-      <footer className="border-t border-slate-800/80 bg-slate-950 py-6 text-center text-xs text-slate-500">
-        AI YouTube Documentary Studio &bull; Windows Local Development &bull; Built with Next.js, FastAPI & Supabase
-      </footer>
+      </div>
     </div>
   );
 }

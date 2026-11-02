@@ -84,3 +84,4 @@ class ProjectService:
         db.delete(project)
         db.commit()
         return True
+

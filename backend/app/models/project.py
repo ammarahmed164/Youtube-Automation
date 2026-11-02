@@ -74,3 +74,4 @@ class ProjectActivity(Base):
     created_at = Column(DateTime(timezone=True), default=utc_now)
 
     project = relationship("Project", back_populates="activities")
+
