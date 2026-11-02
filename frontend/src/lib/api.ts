@@ -140,3 +140,42 @@ export async function uploadSceneAsset(sceneId: string, file: File): Promise<any
   }
   return res.json();
 }
+
+// Phase 6: Video Rendering Engine APIs
+export async function startVideoRender(projectId: string): Promise<any> {
+  const res = await fetch(`${API_BASE_URL}/projects/${projectId}/render`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => null);
+    throw new Error(err?.detail || `Rendering start failed: HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function fetchRenderStatus(projectId: string): Promise<any> {
+  const res = await fetch(`${API_BASE_URL}/projects/${projectId}/render-status`, {
+    cache: "no-store",
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`Failed to fetch render status: HTTP ${res.status}`);
+  return res.json();
+}
+
+export function getVideoStreamUrl(projectId: string, version?: number): string {
+  const vParam = version ? `?version=${version}` : "";
+  return `${API_BASE_URL}/projects/${projectId}/video${vParam}`;
+}
+
+export function getVideoSubtitlesUrl(projectId: string, format: string = "vtt", version?: number): string {
+  const vParam = version ? `&version=${version}` : "";
+  return `${API_BASE_URL}/projects/${projectId}/subtitles?format=${format}${vParam}`;
+}
+
+export async function fetchVideoVersions(projectId: string): Promise<any[]> {
+  const res = await fetch(`${API_BASE_URL}/projects/${projectId}/versions`, {
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error(`Failed to fetch video versions: HTTP ${res.status}`);
+  return res.json();
+}

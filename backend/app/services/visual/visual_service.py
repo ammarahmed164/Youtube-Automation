@@ -462,3 +462,4 @@ class VisualService(BaseVisualService):
             "attribution": "User Custom Upload",
             "filename": original_filename
         }
+

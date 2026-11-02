@@ -103,3 +103,25 @@ export interface ScriptRevisionData {
   created_at: string;
   scenes: SceneItem[];
 }
+
+export interface VideoVersionData {
+  id: string;
+  project_id: string;
+  version_number: number;
+  file_path: string;
+  file_checksum: string;
+  duration_seconds: number;
+  resolution: string;
+  render_settings?: Record<string, any> | null;
+  created_at: string;
+}
+
+export interface RenderJobStatus {
+  job_id: string;
+  project_id: string;
+  status: "queued" | "running" | "completed" | "failed";
+  progress_percent: number;
+  log_messages?: string[] | null;
+  error_details?: string | null;
+  video_version?: VideoVersionData | null;
+}

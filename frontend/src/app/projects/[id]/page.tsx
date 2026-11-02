@@ -27,6 +27,9 @@ import {
   Image as ImageIcon,
   UploadCloud,
   Volume2,
+  Play,
+  Download,
+  Terminal,
 } from "lucide-react";
 import {
   fetchProjectById,
@@ -39,8 +42,13 @@ import {
   uploadSceneAsset,
   getSceneVisualUrl,
   getSceneAudioUrl,
+  startVideoRender,
+  fetchRenderStatus,
+  getVideoStreamUrl,
+  getVideoSubtitlesUrl,
+  fetchVideoVersions,
 } from "@/lib/api";
-import { Project, ScriptRevisionData } from "@/types/project";
+import { Project, ScriptRevisionData, VideoVersionData } from "@/types/project";
 
 function WorkspaceContent() {
   const params = useParams();
@@ -53,7 +61,7 @@ function WorkspaceContent() {
   const [generating, setGenerating] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"scenes" | "script" | "sources">("scenes");
+  const [activeTab, setActiveTab] = useState<"scenes" | "script" | "sources" | "video">("scenes");
 
   // Editable script states
   const [editableScript, setEditableScript] = useState("");
@@ -66,6 +74,14 @@ function WorkspaceContent() {
   const [generatingVisuals, setGeneratingVisuals] = useState(false);
   const [uploadingSceneId, setUploadingSceneId] = useState<string | null>(null);
   const [assetTimestamp, setAssetTimestamp] = useState<number>(Date.now());
+
+  // Phase 6 Video Rendering states
+  const [isRendering, setIsRendering] = useState(false);
+  const [renderProgress, setRenderProgress] = useState(0);
+  const [renderLogs, setRenderLogs] = useState<string[]>([]);
+  const [latestVideo, setLatestVideo] = useState<VideoVersionData | null>(null);
+  const [videoVersions, setVideoVersions] = useState<VideoVersionData[]>([]);
+  const [videoTimestamp, setVideoTimestamp] = useState<number>(Date.now());
 
   useEffect(() => {
     if (!projectId) return;
@@ -81,6 +97,24 @@ function WorkspaceContent() {
           setEditableHook(sc.title_hook || "");
           setEditableConclusion(sc.conclusion || "");
         }
+
+        // Load video rendering data if exists
+        try {
+          const versions = await fetchVideoVersions(projectId);
+          setVideoVersions(versions);
+          if (versions && versions.length > 0) {
+            setLatestVideo(versions[0]);
+          }
+
+          const status = await fetchRenderStatus(projectId);
+          if (status && (status.status === "queued" || status.status === "running")) {
+            setIsRendering(true);
+            setRenderProgress(status.progress_percent || 0);
+            if (status.log_messages) setRenderLogs(status.log_messages);
+          }
+        } catch {
+          // No video rendered yet
+        }
       } catch (err: any) {
         setError(err.message || "Failed to load project workspace");
       } finally {
@@ -89,6 +123,39 @@ function WorkspaceContent() {
     }
     loadData();
   }, [projectId]);
+
+  // Polling for background rendering job
+  useEffect(() => {
+    let interval: any = null;
+    if (isRendering) {
+      interval = setInterval(async () => {
+        try {
+          const status = await fetchRenderStatus(projectId);
+          if (status) {
+            setRenderProgress(status.progress_percent || 0);
+            if (status.log_messages) setRenderLogs(status.log_messages);
+            if (status.status === "completed") {
+              setIsRendering(false);
+              const versions = await fetchVideoVersions(projectId);
+              setVideoVersions(versions);
+              if (versions.length > 0) setLatestVideo(versions[0]);
+              setVideoTimestamp(Date.now());
+              const updatedProj = await fetchProjectById(projectId);
+              setProject(updatedProj);
+            } else if (status.status === "failed") {
+              setIsRendering(false);
+              setError(status.error_details || "Rendering job failed.");
+            }
+          }
+        } catch (e) {
+          console.error("Status polling error:", e);
+        }
+      }, 2500);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [isRendering, projectId]);
 
   const handleGenerateScript = async () => {
     setGenerating(true);
@@ -170,6 +237,20 @@ function WorkspaceContent() {
       alert(err.message || "Failed to upload asset.");
     } finally {
       setUploadingSceneId(null);
+    }
+  };
+
+  const handleStartRender = async () => {
+    setError(null);
+    setIsRendering(true);
+    setRenderProgress(5);
+    setRenderLogs(["Submitting render request to FFmpeg background worker..."]);
+    setActiveTab("video");
+    try {
+      await startVideoRender(projectId);
+    } catch (err: any) {
+      setIsRendering(false);
+      setError(err.message || "Failed to trigger video rendering.");
     }
   };
 
@@ -407,6 +488,20 @@ function WorkspaceContent() {
                 <CheckCheck className="w-3.5 h-3.5 text-emerald-400" />
                 <span>Fact-Check & Citations ({script.research_sources?.length || 0})</span>
               </button>
+
+              <button
+                onClick={() => setActiveTab("video")}
+                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-colors ${
+                  activeTab === "video"
+                    ? "bg-rose-600 text-white shadow-sm"
+                    : latestVideo
+                    ? "text-rose-400 hover:text-rose-300"
+                    : "text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                <Video className="w-3.5 h-3.5" />
+                <span>Video Player & Review {latestVideo ? `(v${latestVideo.version_number})` : ""}</span>
+              </button>
             </div>
 
             {/* Tab 1: Scene Breakdown */}
@@ -444,6 +539,15 @@ function WorkspaceContent() {
                     >
                       <ImageIcon className={`w-3.5 h-3.5 ${generatingVisuals ? "animate-spin" : ""}`} />
                       <span>{generatingVisuals ? "Acquiring Visuals..." : "Generate Visuals (NASA & Canvas)"}</span>
+                    </button>
+
+                    <button
+                      onClick={handleStartRender}
+                      disabled={isRendering}
+                      className="flex items-center gap-2 text-xs font-semibold px-4 py-2 rounded-xl bg-gradient-to-r from-rose-600 to-rose-500 hover:from-rose-500 hover:to-rose-400 text-white transition-all disabled:opacity-50 shadow-md shadow-rose-950/40"
+                    >
+                      <Film className={`w-3.5 h-3.5 ${isRendering ? "animate-spin" : ""}`} />
+                      <span>{isRendering ? "Rendering Video..." : "Render Video (FFmpeg)"}</span>
                     </button>
                   </div>
                 </div>
@@ -729,6 +833,175 @@ function WorkspaceContent() {
                 ) : (
                   <div className="py-8 text-center text-xs text-slate-500">
                     No research citations recorded for this script.
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Tab 4: Phase 6 Video Player & Review */}
+            {activeTab === "video" && (
+              <div className="space-y-6">
+                {isRendering ? (
+                  /* Live Rendering Progress Terminal */
+                  <div className="p-6 sm:p-8 rounded-3xl border border-rose-500/30 bg-slate-950/80 space-y-6">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2 text-rose-400 text-xs font-bold uppercase tracking-wider">
+                          <Film className="w-4 h-4 animate-spin text-rose-500" />
+                          <span>Phase 6 &bull; FFmpeg Video Rendering in Progress</span>
+                        </div>
+                        <h3 className="text-lg font-bold text-white">Compiling 1080p Documentary MP4...</h3>
+                        <p className="text-xs text-slate-400">
+                          Applying Ken Burns zoom/pan on visuals, synchronizing Piper voiceover audio, and embedding subtitles.
+                        </p>
+                      </div>
+
+                      <div className="text-right">
+                        <span className="text-3xl font-black font-mono text-rose-400">{renderProgress}%</span>
+                      </div>
+                    </div>
+
+                    {/* Progress Bar */}
+                    <div className="w-full h-3 rounded-full bg-slate-900 border border-slate-800 overflow-hidden">
+                      <div
+                        className="h-full bg-gradient-to-r from-rose-600 to-indigo-500 transition-all duration-500 rounded-full"
+                        style={{ width: `${renderProgress}%` }}
+                      />
+                    </div>
+
+                    {/* Real-time Render Log Terminal */}
+                    <div className="p-4 rounded-xl bg-slate-900/90 border border-slate-800 font-mono text-xs space-y-1.5 max-h-56 overflow-y-auto">
+                      <div className="flex items-center gap-2 text-slate-500 text-[11px] pb-1 border-b border-slate-800">
+                        <Terminal className="w-3.5 h-3.5" />
+                        <span>FFmpeg Pipeline Event Logs</span>
+                      </div>
+                      {renderLogs && renderLogs.length > 0 ? (
+                        renderLogs.map((log, i) => (
+                          <div key={i} className="text-slate-300 text-[11px] flex items-start gap-2">
+                            <span className="text-slate-500">[{i + 1}]</span>
+                            <span>{log}</span>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="text-slate-500 text-[11px]">Initializing rendering engine...</div>
+                      )}
+                    </div>
+                  </div>
+                ) : latestVideo ? (
+                  /* Rendered Video Player & Review Hub */
+                  <div className="space-y-6">
+                    {/* HTML5 Video Player */}
+                    <div className="relative rounded-2xl overflow-hidden border border-slate-800 bg-black shadow-2xl">
+                      <video
+                        controls
+                        className="w-full aspect-video"
+                        poster={script?.scenes[0]?.id ? `${getSceneVisualUrl(script.scenes[0].id)}?t=${assetTimestamp}` : undefined}
+                      >
+                        <source src={`${getVideoStreamUrl(projectId)}?t=${videoTimestamp}`} type="video/mp4" />
+                        <track
+                          kind="subtitles"
+                          src={`${getVideoSubtitlesUrl(projectId, "vtt")}?t=${videoTimestamp}`}
+                          srcLang="en"
+                          label="English"
+                          default
+                        />
+                        Your browser does not support HTML5 video streaming.
+                      </video>
+                    </div>
+
+                    {/* Video Information & Actions Card */}
+                    <div className="p-6 rounded-2xl border border-slate-800 bg-slate-950/60 space-y-5">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2">
+                            <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                              Version v{latestVideo.version_number}.0 Ready
+                            </span>
+                            <span className="text-xs text-slate-400">1080p Full HD &bull; H.264 / AAC</span>
+                          </div>
+                          <h3 className="text-base font-bold text-white">{project.title}</h3>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2.5">
+                          <a
+                            href={getVideoStreamUrl(projectId)}
+                            download={`documentary_${project.title.toLowerCase().replace(/[^a-z0-9]/g, "_")}.mp4`}
+                            className="flex items-center gap-2 text-xs font-semibold px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 transition-colors"
+                          >
+                            <Download className="w-3.5 h-3.5 text-rose-400" />
+                            <span>Download MP4</span>
+                          </a>
+
+                          <a
+                            href={getVideoSubtitlesUrl(projectId, "srt")}
+                            download="subtitles.srt"
+                            className="flex items-center gap-2 text-xs font-semibold px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 transition-colors"
+                          >
+                            <Download className="w-3.5 h-3.5 text-indigo-400" />
+                            <span>Download Subtitles (.srt)</span>
+                          </a>
+
+                          <button
+                            onClick={handleStartRender}
+                            disabled={isRendering}
+                            className="flex items-center gap-2 text-xs font-semibold px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white transition-colors"
+                          >
+                            <RefreshCw className={`w-3.5 h-3.5 ${isRendering ? "animate-spin" : ""}`} />
+                            <span>Re-Render Video</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Technical Specs & SHA-256 Checksum (Crucial for Approval Gate!) */}
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-3 border-t border-slate-900 text-xs">
+                        <div className="p-3 rounded-xl bg-slate-900/50 border border-slate-800/80">
+                          <span className="text-slate-500 text-[10px] block uppercase font-mono">Total Duration</span>
+                          <span className="font-semibold text-slate-200 text-xs mt-0.5 block font-mono">
+                            {Math.floor(latestVideo.duration_seconds / 60)}m {Math.round(latestVideo.duration_seconds % 60)}s
+                          </span>
+                        </div>
+
+                        <div className="p-3 rounded-xl bg-slate-900/50 border border-slate-800/80">
+                          <span className="text-slate-500 text-[10px] block uppercase font-mono">Resolution & Codec</span>
+                          <span className="font-semibold text-slate-200 text-xs mt-0.5 block font-mono">
+                            1920x1080 (16:9) &bull; libx264
+                          </span>
+                        </div>
+
+                        <div className="p-3 rounded-xl bg-slate-900/50 border border-slate-800/80">
+                          <span className="text-slate-500 text-[10px] block uppercase font-mono">Rendered Timestamp</span>
+                          <span className="font-semibold text-slate-200 text-xs mt-0.5 block font-mono">
+                            {new Date(latestVideo.created_at).toLocaleTimeString()}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Immutable SHA-256 Checksum Pill */}
+                      <div className="p-3 rounded-xl bg-slate-900/80 border border-slate-800 flex items-center justify-between text-[11px] font-mono">
+                        <span className="text-slate-500 uppercase">SHA-256 Checksum:</span>
+                        <span className="text-emerald-400 select-all font-semibold">{latestVideo.file_checksum}</span>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  /* Empty Video State / Call to Action */
+                  <div className="p-10 rounded-3xl border border-dashed border-slate-800 bg-slate-950/40 text-center space-y-4">
+                    <div className="w-14 h-14 rounded-2xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center mx-auto text-rose-400">
+                      <Film className="w-7 h-7" />
+                    </div>
+                    <div className="space-y-1.5 max-w-md mx-auto">
+                      <h3 className="font-bold text-base text-white">Ready to Render Documentary MP4</h3>
+                      <p className="text-xs text-slate-400 leading-relaxed">
+                        Voiceover and 1080p visuals are prepared. Click below to stitch scenes with Ken Burns cinematic zoom, audio narration, and synchronized subtitles.
+                      </p>
+                    </div>
+                    <button
+                      onClick={handleStartRender}
+                      className="inline-flex items-center gap-2 bg-gradient-to-r from-rose-600 to-rose-500 hover:from-rose-500 hover:to-rose-400 text-white text-xs font-semibold px-6 py-3 rounded-xl shadow-lg shadow-rose-950/50 transition-all hover:scale-[1.02]"
+                    >
+                      <Play className="w-4 h-4 fill-white" />
+                      <span>Start Video Rendering</span>
+                    </button>
                   </div>
                 )}
               </div>
