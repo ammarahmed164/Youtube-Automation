@@ -29,6 +29,18 @@ class DocumentaryScriptPlan(BaseModel):
     research_sources: List[ResearchCitation] = Field(default_factory=list, description="Verified facts and source citations")
     scenes: List[ScenePlanItem] = Field(description="Complete scene-by-scene structured plan")
 
+class SceneAssetResponse(BaseModel):
+    id: str
+    asset_type: str
+    source_provider: Optional[str] = None
+    source_url: Optional[str] = None
+    file_path: str
+    attribution: Optional[str] = None
+    license_notes: Optional[str] = None
+    duration_seconds: Optional[float] = None
+
+    model_config = {"from_attributes": True}
+
 class SceneResponse(BaseModel):
     id: str
     scene_order: int
@@ -44,6 +56,7 @@ class SceneResponse(BaseModel):
     image_prompt: Optional[str]
     on_screen_text: Optional[str]
     transition_preference: str
+    assets: List[SceneAssetResponse] = []
 
     model_config = {"from_attributes": True}
 

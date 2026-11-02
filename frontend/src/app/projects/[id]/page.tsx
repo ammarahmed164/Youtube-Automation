@@ -24,8 +24,22 @@ import {
   AlertCircle,
   HelpCircle,
   ChevronRight,
+  Image as ImageIcon,
+  UploadCloud,
+  Volume2,
 } from "lucide-react";
-import { fetchProjectById, deleteProject, generateScript, fetchScript, updateScript } from "@/lib/api";
+import {
+  fetchProjectById,
+  deleteProject,
+  generateScript,
+  fetchScript,
+  updateScript,
+  generateProjectVoice,
+  generateProjectVisuals,
+  uploadSceneAsset,
+  getSceneVisualUrl,
+  getSceneAudioUrl,
+} from "@/lib/api";
 import { Project, ScriptRevisionData } from "@/types/project";
 
 function WorkspaceContent() {
@@ -46,6 +60,12 @@ function WorkspaceContent() {
   const [editableHook, setEditableHook] = useState("");
   const [editableConclusion, setEditableConclusion] = useState("");
   const [isEditing, setIsEditing] = useState(false);
+
+  // Phase 5 Asset Generation states
+  const [generatingVoice, setGeneratingVoice] = useState(false);
+  const [generatingVisuals, setGeneratingVisuals] = useState(false);
+  const [uploadingSceneId, setUploadingSceneId] = useState<string | null>(null);
+  const [assetTimestamp, setAssetTimestamp] = useState<number>(Date.now());
 
   useEffect(() => {
     if (!projectId) return;
@@ -103,6 +123,53 @@ function WorkspaceContent() {
       alert(err.message || "Failed to save script edits");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleGenerateVoice = async () => {
+    setGeneratingVoice(true);
+    setError(null);
+    try {
+      await generateProjectVoice(projectId);
+      const sc = await fetchScript(projectId);
+      if (sc) setScript(sc);
+      setAssetTimestamp(Date.now());
+      alert("Neural voiceover synthesized successfully for all scenes!");
+    } catch (err: any) {
+      setError(err.message || "Failed to generate voiceover.");
+    } finally {
+      setGeneratingVoice(false);
+    }
+  };
+
+  const handleGenerateVisuals = async () => {
+    setGeneratingVisuals(true);
+    setError(null);
+    try {
+      await generateProjectVisuals(projectId, true);
+      const sc = await fetchScript(projectId);
+      if (sc) setScript(sc);
+      setAssetTimestamp(Date.now());
+      alert("Visual assets acquired successfully for all scenes!");
+    } catch (err: any) {
+      setError(err.message || "Failed to generate visual assets.");
+    } finally {
+      setGeneratingVisuals(false);
+    }
+  };
+
+  const handleUploadAsset = async (sceneId: string, file: File) => {
+    setUploadingSceneId(sceneId);
+    try {
+      await uploadSceneAsset(sceneId, file);
+      const sc = await fetchScript(projectId);
+      if (sc) setScript(sc);
+      setAssetTimestamp(Date.now());
+      alert("Custom visual asset uploaded successfully!");
+    } catch (err: any) {
+      alert(err.message || "Failed to upload asset.");
+    } finally {
+      setUploadingSceneId(null);
     }
   };
 
@@ -344,79 +411,215 @@ function WorkspaceContent() {
 
             {/* Tab 1: Scene Breakdown */}
             {activeTab === "scenes" && (
-              <div className="space-y-4">
-                {script.scenes.map((scene) => (
-                  <div
-                    key={scene.id || scene.scene_id_str}
-                    className="p-5 rounded-2xl border border-slate-800 bg-slate-950/60 space-y-3 hover:border-slate-700 transition-colors"
-                  >
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
-                      <div className="flex items-center gap-2">
-                        <span className="w-6 h-6 rounded-lg bg-rose-500/10 text-rose-400 font-bold flex items-center justify-center text-xs">
-                          {scene.scene_order}
-                        </span>
-                        <h4 className="font-bold text-sm text-white">{scene.scene_title || scene.scene_id_str}</h4>
-                      </div>
-
-                      <div className="flex items-center gap-2 text-[11px]">
-                        <span className="px-2 py-0.5 rounded-md bg-slate-900 border border-slate-800 text-emerald-400 font-medium">
-                          ~{scene.estimated_duration_seconds ? Math.round(scene.estimated_duration_seconds) : 30}s
-                        </span>
-                        <span className="px-2 py-0.5 rounded-md bg-slate-900 border border-slate-800 text-slate-300 capitalize">
-                          {scene.preferred_visual_type.replace(/_/g, " ")}
-                        </span>
-                        <span className="px-2 py-0.5 rounded-md bg-slate-900 border border-slate-800 text-slate-400">
-                          {scene.transition_preference}
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Narration Script */}
-                    <div className="p-3.5 rounded-xl bg-slate-900/60 border border-slate-800/80">
-                      <span className="text-[10px] font-bold text-indigo-400 uppercase tracking-wider block mb-1">
-                        Voiceover Narration
+              <div className="space-y-6">
+                {/* Phase 5 Action Bar: Voiceover & Visual Engine */}
+                <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-slate-900 via-indigo-950/40 to-slate-900 border border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-sm">
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-2">
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 uppercase tracking-wider">
+                        Phase 5 &bull; Production Studio
                       </span>
-                      <p className="text-xs text-slate-200 leading-relaxed font-sans">{scene.narration_text}</p>
+                      <span className="text-xs font-semibold text-slate-300">Voiceover & Visual Engine</span>
                     </div>
-
-                    {/* Visual Direction & Keywords */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-                      <div className="space-y-1">
-                        <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
-                          Visual Direction:
-                        </span>
-                        <p className="text-slate-400 text-[11px] leading-relaxed">{scene.visual_description}</p>
-                      </div>
-
-                      <div className="space-y-1">
-                        <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
-                          Stock Keywords (Pexels):
-                        </span>
-                        <div className="flex flex-wrap gap-1">
-                          {scene.stock_keywords && scene.stock_keywords.length > 0 ? (
-                            scene.stock_keywords.map((kw, i) => (
-                              <span
-                                key={i}
-                                className="px-2 py-0.5 rounded-md bg-slate-800 text-[10px] text-slate-300 font-mono"
-                              >
-                                #{kw}
-                              </span>
-                            ))
-                          ) : (
-                            <span className="text-slate-500 text-[11px]">No keywords</span>
-                          )}
-                        </div>
-                      </div>
+                    <div className="text-xs text-slate-400 flex items-center gap-4">
+                      <span>Audio: <b className="text-emerald-400">{script.scenes.filter(s => s.actual_audio_duration_seconds).length} / {script.scenes.length}</b> ready</span>
+                      <span>Visuals: <b className="text-indigo-400">{script.scenes.filter(s => s.assets && s.assets.length > 0).length} / {script.scenes.length}</b> attached</span>
                     </div>
-
-                    {scene.on_screen_text && (
-                      <div className="pt-2 border-t border-slate-900 flex items-center gap-2 text-[11px] text-amber-400">
-                        <span className="font-semibold">On-Screen Text:</span>
-                        <span>"{scene.on_screen_text}"</span>
-                      </div>
-                    )}
                   </div>
-                ))}
+
+                  <div className="flex flex-wrap items-center gap-2.5">
+                    <button
+                      onClick={handleGenerateVoice}
+                      disabled={generatingVoice}
+                      className="flex items-center gap-2 text-xs font-semibold px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white transition-all disabled:opacity-50 shadow-md shadow-indigo-950/40"
+                    >
+                      <Mic className={`w-3.5 h-3.5 ${generatingVoice ? "animate-spin" : ""}`} />
+                      <span>{generatingVoice ? "Synthesizing Audio..." : "Generate Voiceover (Piper TTS)"}</span>
+                    </button>
+
+                    <button
+                      onClick={handleGenerateVisuals}
+                      disabled={generatingVisuals}
+                      className="flex items-center gap-2 text-xs font-semibold px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white transition-all disabled:opacity-50 shadow-md shadow-purple-950/40"
+                    >
+                      <ImageIcon className={`w-3.5 h-3.5 ${generatingVisuals ? "animate-spin" : ""}`} />
+                      <span>{generatingVisuals ? "Acquiring Visuals..." : "Generate Visuals (NASA & Canvas)"}</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Scene Cards */}
+                <div className="space-y-4">
+                  {script.scenes.map((scene) => {
+                    const hasAudio = !!scene.actual_audio_duration_seconds;
+                    const asset = scene.assets && scene.assets.length > 0 ? scene.assets[0] : null;
+
+                    return (
+                      <div
+                        key={scene.id || scene.scene_id_str}
+                        className="p-5 rounded-2xl border border-slate-800 bg-slate-950/60 space-y-4 hover:border-slate-700 transition-colors"
+                      >
+                        {/* Scene Header */}
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                          <div className="flex items-center gap-2">
+                            <span className="w-6 h-6 rounded-lg bg-rose-500/10 text-rose-400 font-bold flex items-center justify-center text-xs">
+                              {scene.scene_order}
+                            </span>
+                            <h4 className="font-bold text-sm text-white">{scene.scene_title || scene.scene_id_str}</h4>
+                          </div>
+
+                          <div className="flex items-center gap-2 text-[11px]">
+                            <span className="px-2 py-0.5 rounded-md bg-slate-900 border border-slate-800 text-emerald-400 font-medium">
+                              {hasAudio
+                                ? `${Math.round(scene.actual_audio_duration_seconds!)}s (actual)`
+                                : `~${scene.estimated_duration_seconds ? Math.round(scene.estimated_duration_seconds) : 30}s`}
+                            </span>
+                            <span className="px-2 py-0.5 rounded-md bg-slate-900 border border-slate-800 text-slate-300 capitalize">
+                              {scene.preferred_visual_type.replace(/_/g, " ")}
+                            </span>
+                            <span className="px-2 py-0.5 rounded-md bg-slate-900 border border-slate-800 text-slate-400">
+                              {scene.transition_preference}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Visual & Narration 2-Column Grid */}
+                        <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
+                          {/* Left Column: Visual Preview (5 cols) */}
+                          <div className="md:col-span-5 space-y-2">
+                            <div className="relative aspect-video rounded-xl overflow-hidden border border-slate-800 bg-slate-900 group">
+                              <img
+                                src={`${getSceneVisualUrl(scene.id)}?t=${assetTimestamp}`}
+                                alt={scene.scene_title || "Visual Preview"}
+                                className="w-full h-full object-cover transition-transform group-hover:scale-105 duration-300"
+                                onError={(e) => {
+                                  (e.target as HTMLImageElement).src =
+                                    "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='100%' height='100%' viewBox='0 0 1920 1080'><rect fill='%230f172a' width='100%' height='100%'/><text fill='%2364748b' x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' font-family='sans-serif' font-size='48'>Visual Pending</text></svg>";
+                                }}
+                              />
+
+                              {/* Source badge on top-left of image */}
+                              <div className="absolute top-2 left-2 flex items-center gap-1.5">
+                                <span className="px-2 py-0.5 rounded-md bg-slate-950/80 backdrop-blur-md text-[10px] font-semibold text-slate-200 border border-slate-800">
+                                  {asset?.source_provider
+                                    ? asset.source_provider.replace(/_/g, " ").toUpperCase()
+                                    : "VISUAL"}
+                                </span>
+                              </div>
+
+                              {/* Upload Custom File Overlay on hover */}
+                              <label
+                                className="absolute inset-0 bg-slate-950/70 backdrop-blur-[2px] opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-1.5 cursor-pointer text-white"
+                              >
+                                <UploadCloud className="w-6 h-6 text-indigo-400" />
+                                <span className="text-xs font-semibold">
+                                  {uploadingSceneId === scene.id ? "Uploading..." : "Replace Visual Asset"}
+                                </span>
+                                <span className="text-[10px] text-slate-400">JPG, PNG, WebP, MP4</span>
+                                <input
+                                  type="file"
+                                  accept="image/jpeg,image/png,image/webp,video/mp4"
+                                  className="hidden"
+                                  disabled={uploadingSceneId === scene.id}
+                                  onChange={(e) => {
+                                    if (e.target.files && e.target.files[0]) {
+                                      handleUploadAsset(scene.id, e.target.files[0]);
+                                    }
+                                  }}
+                                />
+                              </label>
+                            </div>
+
+                            {/* Attribution & License */}
+                            {asset && (
+                              <div className="text-[10px] text-slate-500 truncate flex items-center justify-between">
+                                <span title={asset.attribution || ""}>
+                                  Source: {asset.attribution || "Public Domain"}
+                                </span>
+                                <span>{asset.license_notes || ""}</span>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Right Column: Narration & Audio Player (7 cols) */}
+                          <div className="md:col-span-7 flex flex-col justify-between space-y-3">
+                            <div className="p-3.5 rounded-xl bg-slate-900/60 border border-slate-800/80 space-y-1">
+                              <span className="text-[10px] font-bold text-indigo-400 uppercase tracking-wider block">
+                                Voiceover Narration
+                              </span>
+                              <p className="text-xs text-slate-200 leading-relaxed font-sans">{scene.narration_text}</p>
+                            </div>
+
+                            {/* Audio Player if generated */}
+                            {hasAudio ? (
+                              <div className="p-2.5 rounded-xl bg-indigo-950/30 border border-indigo-900/40 flex items-center gap-3">
+                                <div className="w-8 h-8 rounded-lg bg-indigo-500/20 text-indigo-400 flex items-center justify-center shrink-0">
+                                  <Volume2 className="w-4 h-4" />
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center justify-between text-[11px] mb-1">
+                                    <span className="font-semibold text-slate-300">Neural Voiceover</span>
+                                    <span className="text-emerald-400 font-mono text-[10px]">
+                                      {scene.actual_audio_duration_seconds?.toFixed(1)}s
+                                    </span>
+                                  </div>
+                                  <audio
+                                    controls
+                                    src={`${getSceneAudioUrl(scene.id)}?t=${assetTimestamp}`}
+                                    className="w-full h-7 text-xs"
+                                    preload="none"
+                                  />
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="p-2.5 rounded-xl bg-slate-900/40 border border-dashed border-slate-800 text-[11px] text-slate-500 flex items-center justify-between">
+                                <span>Audio narration not synthesized yet</span>
+                                <span className="text-[10px] text-indigo-400 font-semibold">Piper TTS ready</span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Bottom: Visual Direction & Keywords */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs pt-2 border-t border-slate-900">
+                          <div className="space-y-1">
+                            <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                              Visual Direction:
+                            </span>
+                            <p className="text-slate-400 text-[11px] leading-relaxed">{scene.visual_description}</p>
+                          </div>
+
+                          <div className="space-y-1">
+                            <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                              Stock Keywords:
+                            </span>
+                            <div className="flex flex-wrap gap-1">
+                              {scene.stock_keywords && scene.stock_keywords.length > 0 ? (
+                                scene.stock_keywords.map((kw, i) => (
+                                  <span
+                                    key={i}
+                                    className="px-2 py-0.5 rounded-md bg-slate-800 text-[10px] text-slate-300 font-mono"
+                                  >
+                                    #{kw}
+                                  </span>
+                                ))
+                              ) : (
+                                <span className="text-slate-500 text-[11px]">No keywords</span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        {scene.on_screen_text && (
+                          <div className="pt-2 border-t border-slate-900 flex items-center gap-2 text-[11px] text-amber-400">
+                            <span className="font-semibold">On-Screen Text:</span>
+                            <span>"{scene.on_screen_text}"</span>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             )}
 

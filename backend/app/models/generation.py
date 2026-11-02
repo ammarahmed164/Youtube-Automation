@@ -24,7 +24,7 @@ class ScriptRevision(Base):
     created_at = Column(DateTime(timezone=True), default=utc_now)
 
     project = relationship("Project", back_populates="script_revisions")
-    scenes = relationship("Scene", back_populates="script_revision", cascade="all, delete-orphan")
+    scenes = relationship("Scene", back_populates="script_revision", cascade="all, delete-orphan", order_by="Scene.scene_order")
 
 class Scene(Base):
     __tablename__ = "scenes"

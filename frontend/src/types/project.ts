@@ -59,6 +59,17 @@ export interface HealthStatus {
   };
 }
 
+export interface SceneAssetItem {
+  id: string;
+  asset_type: string;
+  source_provider?: string | null;
+  source_url?: string | null;
+  file_path: string;
+  attribution?: string | null;
+  license_notes?: string | null;
+  duration_seconds?: number | null;
+}
+
 export interface SceneItem {
   id: string;
   scene_order: number;
@@ -74,6 +85,7 @@ export interface SceneItem {
   image_prompt?: string | null;
   on_screen_text?: string | null;
   transition_preference: string;
+  assets?: SceneAssetItem[];
 }
 
 export interface ScriptRevisionData {

@@ -92,3 +92,51 @@ export async function updateScript(
   if (!res.ok) throw new Error(`Failed to update script: HTTP ${res.status}`);
   return res.json();
 }
+
+// Voiceover Narration APIs
+export async function generateProjectVoice(projectId: string): Promise<any> {
+  const res = await fetch(`${API_BASE_URL}/projects/${projectId}/generate-voice`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => null);
+    throw new Error(err?.detail || `Voice generation failed: HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export function getSceneAudioUrl(sceneId: string): string {
+  return `${API_BASE_URL}/projects/scenes/${sceneId}/audio`;
+}
+
+// Visual Asset Engine APIs
+export async function generateProjectVisuals(projectId: string, forceRegenerate: boolean = false): Promise<any> {
+  const res = await fetch(`${API_BASE_URL}/projects/${projectId}/generate-visuals?force_regenerate=${forceRegenerate}`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => null);
+    throw new Error(err?.detail || `Visuals generation failed: HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export function getSceneVisualUrl(sceneId: string): string {
+  return `${API_BASE_URL}/projects/scenes/${sceneId}/visual`;
+}
+
+export async function uploadSceneAsset(sceneId: string, file: File): Promise<any> {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const res = await fetch(`${API_BASE_URL}/projects/scenes/${sceneId}/upload-asset`, {
+    method: "POST",
+    body: formData,
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => null);
+    throw new Error(err?.detail || `Upload asset failed: HTTP ${res.status}`);
+  }
+  return res.json();
+}
