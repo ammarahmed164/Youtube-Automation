@@ -66,8 +66,8 @@ npm run dev
 ## Roadmap & Status
 
 - [x] **Phase 1: Environment Inspection, Setup & Architecture** (COMPLETED)
-- [ ] **Phase 2: Database, Backend Foundation & Project Management** (NEXT)
-- [ ] **Phase 3: Dashboard UX & Documentary Creation Wizard**
+- [x] **Phase 2: Database, Backend Foundation & Project Management** (COMPLETED)
+- [ ] **Phase 3: Dashboard UX & Documentary Creation Wizard** (NEXT)
 - [ ] **Phase 4: Gemini Research, Scripting & Scene Planning**
 - [ ] **Phase 5: Voiceover (Piper TTS) & Visual Assets**
 - [ ] **Phase 6: FFmpeg Rendering & Subtitle Synchronization**
