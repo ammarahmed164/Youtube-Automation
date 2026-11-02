@@ -30,6 +30,10 @@ import {
   Play,
   Download,
   Terminal,
+  Wand2,
+  ShieldCheck,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import {
   fetchProjectById,
@@ -47,8 +51,17 @@ import {
   getVideoStreamUrl,
   getVideoSubtitlesUrl,
   fetchVideoVersions,
+  fetchQualityCheck,
+  runQualityCheck,
+  submitAiModification,
 } from "@/lib/api";
-import { Project, ScriptRevisionData, VideoVersionData } from "@/types/project";
+import {
+  Project,
+  ScriptRevisionData,
+  VideoVersionData,
+  QualityCheckData,
+  ModificationResultData,
+} from "@/types/project";
 
 function WorkspaceContent() {
   const params = useParams();
@@ -83,6 +96,15 @@ function WorkspaceContent() {
   const [videoVersions, setVideoVersions] = useState<VideoVersionData[]>([]);
   const [videoTimestamp, setVideoTimestamp] = useState<number>(Date.now());
 
+  // Phase 7 Quality Checks & AI Modification states
+  const [qualityCheck, setQualityCheck] = useState<QualityCheckData | null>(null);
+  const [checkingQc, setCheckingQc] = useState(false);
+  const [showQcDetails, setShowQcDetails] = useState(false);
+  const [modificationPrompt, setModificationPrompt] = useState("");
+  const [modifying, setModifying] = useState(false);
+  const [modificationResult, setModificationResult] = useState<ModificationResultData | null>(null);
+  const [selectedVersionNum, setSelectedVersionNum] = useState<number | null>(null);
+
   useEffect(() => {
     if (!projectId) return;
 
@@ -104,7 +126,11 @@ function WorkspaceContent() {
           setVideoVersions(versions);
           if (versions && versions.length > 0) {
             setLatestVideo(versions[0]);
+            setSelectedVersionNum(versions[0].version_number);
           }
+
+          const qc = await fetchQualityCheck(projectId);
+          if (qc) setQualityCheck(qc);
 
           const status = await fetchRenderStatus(projectId);
           if (status && (status.status === "queued" || status.status === "running")) {
@@ -251,6 +277,54 @@ function WorkspaceContent() {
     } catch (err: any) {
       setIsRendering(false);
       setError(err.message || "Failed to trigger video rendering.");
+    }
+  };
+
+  const handleRunQc = async () => {
+    setCheckingQc(true);
+    try {
+      const qc = await runQualityCheck(projectId, selectedVersionNum || undefined);
+      setQualityCheck(qc);
+    } catch (err: any) {
+      alert(err.message || "Quality check failed.");
+    } finally {
+      setCheckingQc(false);
+    }
+  };
+
+  const handleApplyAiModification = async () => {
+    if (!modificationPrompt.trim()) return;
+    setModifying(true);
+    setError(null);
+    try {
+      const res = await submitAiModification(projectId, modificationPrompt, true);
+      setModificationResult(res);
+      setModificationPrompt("");
+
+      // Refresh all project state (script, scenes, video versions, QC)
+      const proj = await fetchProjectById(projectId);
+      setProject(proj);
+      const sc = await fetchScript(projectId);
+      if (sc) setScript(sc);
+
+      const versions = await fetchVideoVersions(projectId);
+      setVideoVersions(versions);
+      if (versions && versions.length > 0) {
+        setLatestVideo(versions[0]);
+        setSelectedVersionNum(versions[0].version_number);
+      }
+
+      const qc = await fetchQualityCheck(projectId);
+      if (qc) setQualityCheck(qc);
+
+      setVideoTimestamp(Date.now());
+      setAssetTimestamp(Date.now());
+
+      alert(`AI Revision Applied Successfully!\nVersion v${res.new_video_version?.version_number} generated.\nSummary: ${res.plan_summary}`);
+    } catch (err: any) {
+      setError(err.message || "Failed to apply AI modification.");
+    } finally {
+      setModifying(false);
     }
   };
 
@@ -890,17 +964,51 @@ function WorkspaceContent() {
                 ) : latestVideo ? (
                   /* Rendered Video Player & Review Hub */
                   <div className="space-y-6">
+                    {/* Version Switcher Bar (if multiple versions exist) */}
+                    {videoVersions.length > 1 && (
+                      <div className="flex items-center justify-between p-3 rounded-2xl bg-slate-900/80 border border-slate-800 text-xs">
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold text-slate-400">Version History:</span>
+                          <div className="flex items-center gap-1.5">
+                            {videoVersions.map((v) => (
+                              <button
+                                key={v.id}
+                                onClick={() => {
+                                  setSelectedVersionNum(v.version_number);
+                                  setVideoTimestamp(Date.now());
+                                }}
+                                className={`px-3 py-1 rounded-lg font-mono font-bold transition-all ${
+                                  (selectedVersionNum || latestVideo.version_number) === v.version_number
+                                    ? "bg-rose-600 text-white shadow-sm"
+                                    : "bg-slate-800 text-slate-400 hover:text-white"
+                                }`}
+                              >
+                                v{v.version_number}.0
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        <span className="text-slate-500 text-[11px]">
+                          Showing Version v{selectedVersionNum || latestVideo.version_number}.0
+                        </span>
+                      </div>
+                    )}
+
                     {/* HTML5 Video Player */}
                     <div className="relative rounded-2xl overflow-hidden border border-slate-800 bg-black shadow-2xl">
                       <video
                         controls
+                        key={`${selectedVersionNum || latestVideo.version_number}-${videoTimestamp}`}
                         className="w-full aspect-video"
                         poster={script?.scenes[0]?.id ? `${getSceneVisualUrl(script.scenes[0].id)}?t=${assetTimestamp}` : undefined}
                       >
-                        <source src={`${getVideoStreamUrl(projectId)}?t=${videoTimestamp}`} type="video/mp4" />
+                        <source
+                          src={`${getVideoStreamUrl(projectId, selectedVersionNum || undefined)}?t=${videoTimestamp}`}
+                          type="video/mp4"
+                        />
                         <track
                           kind="subtitles"
-                          src={`${getVideoSubtitlesUrl(projectId, "vtt")}?t=${videoTimestamp}`}
+                          src={`${getVideoSubtitlesUrl(projectId, "vtt", selectedVersionNum || undefined)}?t=${videoTimestamp}`}
                           srcLang="en"
                           label="English"
                           default
@@ -915,7 +1023,7 @@ function WorkspaceContent() {
                         <div className="space-y-1">
                           <div className="flex items-center gap-2">
                             <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                              Version v{latestVideo.version_number}.0 Ready
+                              Version v{selectedVersionNum || latestVideo.version_number}.0 Ready
                             </span>
                             <span className="text-xs text-slate-400">1080p Full HD &bull; H.264 / AAC</span>
                           </div>
@@ -924,8 +1032,8 @@ function WorkspaceContent() {
 
                         <div className="flex flex-wrap items-center gap-2.5">
                           <a
-                            href={getVideoStreamUrl(projectId)}
-                            download={`documentary_${project.title.toLowerCase().replace(/[^a-z0-9]/g, "_")}.mp4`}
+                            href={getVideoStreamUrl(projectId, selectedVersionNum || undefined)}
+                            download={`documentary_v${selectedVersionNum || latestVideo.version_number}.mp4`}
                             className="flex items-center gap-2 text-xs font-semibold px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 transition-colors"
                           >
                             <Download className="w-3.5 h-3.5 text-rose-400" />
@@ -933,8 +1041,8 @@ function WorkspaceContent() {
                           </a>
 
                           <a
-                            href={getVideoSubtitlesUrl(projectId, "srt")}
-                            download="subtitles.srt"
+                            href={getVideoSubtitlesUrl(projectId, "srt", selectedVersionNum || undefined)}
+                            download={`subtitles_v${selectedVersionNum || latestVideo.version_number}.srt`}
                             className="flex items-center gap-2 text-xs font-semibold px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 transition-colors"
                           >
                             <Download className="w-3.5 h-3.5 text-indigo-400" />
@@ -944,10 +1052,10 @@ function WorkspaceContent() {
                           <button
                             onClick={handleStartRender}
                             disabled={isRendering}
-                            className="flex items-center gap-2 text-xs font-semibold px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white transition-colors"
+                            className="flex items-center gap-2 text-xs font-semibold px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors"
                           >
                             <RefreshCw className={`w-3.5 h-3.5 ${isRendering ? "animate-spin" : ""}`} />
-                            <span>Re-Render Video</span>
+                            <span>Full Re-Render</span>
                           </button>
                         </div>
                       </div>
@@ -981,6 +1089,162 @@ function WorkspaceContent() {
                         <span className="text-slate-500 uppercase">SHA-256 Checksum:</span>
                         <span className="text-emerald-400 select-all font-semibold">{latestVideo.file_checksum}</span>
                       </div>
+                    </div>
+
+                    {/* PHASE 7: Automated Quality Control (QC) Panel */}
+                    <div className="p-6 rounded-2xl border border-slate-800 bg-slate-950/60 space-y-4">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div className="flex items-center gap-3">
+                          <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
+                            qualityCheck?.passed ? "bg-emerald-500/10 text-emerald-400" : "bg-rose-500/10 text-rose-400"
+                          }`}>
+                            <ShieldCheck className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <h4 className="font-bold text-sm text-white">Automated Quality Control (QC)</h4>
+                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                                qualityCheck?.passed ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" : "bg-rose-500/10 text-rose-400 border border-rose-500/20"
+                              }`}>
+                                {qualityCheck ? `${qualityCheck.score_percent}% Verified` : "Pending Check"}
+                              </span>
+                            </div>
+                            <p className="text-xs text-slate-400">
+                              Automated verification for duration tolerance (≤20m), audio loudness, black gaps, and resolution.
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={handleRunQc}
+                            disabled={checkingQc}
+                            className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors"
+                          >
+                            <RefreshCw className={`w-3.5 h-3.5 ${checkingQc ? "animate-spin" : ""}`} />
+                            <span>{checkingQc ? "Auditing..." : "Re-Run QC"}</span>
+                          </button>
+
+                          <button
+                            onClick={() => setShowQcDetails(!showQcDetails)}
+                            className="flex items-center gap-1 text-xs text-slate-400 hover:text-white px-2 py-1.5"
+                          >
+                            <span>{showQcDetails ? "Hide Checks" : "View 8 Checks"}</span>
+                            {showQcDetails ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Expandable QC Checklist */}
+                      {showQcDetails && qualityCheck?.check_results && (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 pt-3 border-t border-slate-900 text-xs">
+                          {Object.entries(qualityCheck.check_results).map(([key, check]: [string, any]) => (
+                            <div
+                              key={key}
+                              className="p-3 rounded-xl bg-slate-900/50 border border-slate-800/80 flex items-start gap-2.5"
+                            >
+                              <div className={`w-4 h-4 rounded-full flex items-center justify-center shrink-0 mt-0.5 ${
+                                check.passed ? "bg-emerald-500/20 text-emerald-400" : "bg-rose-500/20 text-rose-400"
+                              }`}>
+                                {check.passed ? <CheckCircle2 className="w-3 h-3" /> : <AlertCircle className="w-3 h-3" />}
+                              </div>
+                              <div className="space-y-0.5 min-w-0">
+                                <div className="flex items-center justify-between">
+                                  <span className="font-semibold text-slate-200 capitalize">{key.replace(/_/g, " ")}</span>
+                                  <span className={`text-[10px] font-mono font-bold ${
+                                    check.passed ? "text-emerald-400" : "text-rose-400"
+                                  }`}>
+                                    {check.status_label}
+                                  </span>
+                                </div>
+                                <p className="text-[11px] text-slate-400 leading-relaxed">{check.message}</p>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* PHASE 7: AI Natural Language Modification Assistant */}
+                    <div className="p-6 rounded-2xl border border-indigo-900/40 bg-gradient-to-b from-indigo-950/20 to-slate-950/80 space-y-4">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2.5">
+                          <div className="w-8 h-8 rounded-lg bg-indigo-500/10 text-indigo-400 flex items-center justify-center shrink-0">
+                            <Wand2 className="w-4 h-4" />
+                          </div>
+                          <div>
+                            <h4 className="font-bold text-sm text-white">AI Natural Language Modification Assistant</h4>
+                            <p className="text-xs text-slate-400">
+                              Tell AI what you'd like to refine. It will update only the affected scenes and re-render a new version.
+                            </p>
+                          </div>
+                        </div>
+
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 uppercase tracking-wider">
+                          Phase 7 &bull; Smart Deltas
+                        </span>
+                      </div>
+
+                      {/* Prompt Input Area */}
+                      <div className="space-y-3">
+                        <textarea
+                          rows={3}
+                          value={modificationPrompt}
+                          onChange={(e) => setModificationPrompt(e.target.value)}
+                          placeholder="e.g. Make scene 3 narration shorter and more dramatic, and add on-screen text 'Alien Atmospheres'..."
+                          className="w-full p-4 rounded-xl bg-slate-900/80 border border-slate-800 text-white text-xs leading-relaxed focus:outline-none focus:border-indigo-500 font-sans resize-none"
+                          disabled={modifying}
+                        />
+
+                        {/* Quick Suggestion Chips */}
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-[11px] text-slate-500">Try asking:</span>
+                          {[
+                            "Make scene 3 narration punchier and shorter",
+                            "Change scene 1 visual to a deep field nebula",
+                            "Add on-screen text '13.8 Billion Years' to scene 2",
+                          ].map((chip, idx) => (
+                            <button
+                              key={idx}
+                              type="button"
+                              onClick={() => setModificationPrompt(chip)}
+                              className="px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-800 text-[11px] text-slate-400 hover:text-indigo-300 hover:border-slate-700 transition-colors"
+                            >
+                              "{chip}"
+                            </button>
+                          ))}
+                        </div>
+
+                        {/* Submit Button & Feedback */}
+                        <div className="flex items-center justify-between pt-2">
+                          <span className="text-[11px] text-slate-500">
+                            Re-synthesizes audio & re-renders video as a new version (e.g. v2.0).
+                          </span>
+
+                          <button
+                            onClick={handleApplyAiModification}
+                            disabled={modifying || !modificationPrompt.trim()}
+                            className="flex items-center gap-2 text-xs font-semibold px-5 py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white shadow-lg shadow-indigo-950/40 transition-all disabled:opacity-50 hover:scale-[1.01]"
+                          >
+                            <Sparkles className={`w-4 h-4 ${modifying ? "animate-spin" : ""}`} />
+                            <span>{modifying ? "AI Applying Revision..." : "Apply AI Revision & Re-Render"}</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Success / Plan Summary Banner */}
+                      {modificationResult && (
+                        <div className="p-4 rounded-xl bg-indigo-950/40 border border-indigo-800/60 text-xs text-slate-300 space-y-1 mt-3">
+                          <div className="flex items-center gap-2 font-bold text-indigo-300">
+                            <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                            <span>Revision Summary:</span>
+                          </div>
+                          <p>{modificationResult.plan_summary}</p>
+                          <div className="text-[11px] text-slate-400 pt-1">
+                            Updated Scene(s): {modificationResult.affected_scenes?.join(", ") || "targeted"} &bull; Created Version v{modificationResult.new_video_version?.version_number}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
                 ) : (

@@ -125,3 +125,32 @@ export interface RenderJobStatus {
   error_details?: string | null;
   video_version?: VideoVersionData | null;
 }
+
+export interface QualityCheckDetail {
+  passed: boolean;
+  status_label: string;
+  message: string;
+  [key: string]: any;
+}
+
+export interface QualityCheckData {
+  id: string;
+  video_version_id: string;
+  passed: boolean;
+  overall_status: string;
+  score_percent: number;
+  check_results: Record<string, QualityCheckDetail>;
+  warnings: string[];
+  created_at: string;
+}
+
+export interface ModificationResultData {
+  status: string;
+  project_id: string;
+  plan_summary: string;
+  affected_scenes: number[];
+  re_rendered: boolean;
+  new_video_version?: VideoVersionData | null;
+  quality_check?: QualityCheckData | null;
+  message: string;
+}

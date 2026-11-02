@@ -179,3 +179,43 @@ export async function fetchVideoVersions(projectId: string): Promise<any[]> {
   if (!res.ok) throw new Error(`Failed to fetch video versions: HTTP ${res.status}`);
   return res.json();
 }
+
+// Phase 7: Quality Control & AI Modification APIs
+export async function fetchQualityCheck(projectId: string, version?: number): Promise<any> {
+  const vParam = version ? `?version=${version}` : "";
+  const res = await fetch(`${API_BASE_URL}/projects/${projectId}/quality-check${vParam}`, {
+    cache: "no-store",
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`Failed to fetch quality check: HTTP ${res.status}`);
+  return res.json();
+}
+
+export async function runQualityCheck(projectId: string, version?: number): Promise<any> {
+  const vParam = version ? `?version=${version}` : "";
+  const res = await fetch(`${API_BASE_URL}/projects/${projectId}/quality-check${vParam}`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => null);
+    throw new Error(err?.detail || `Quality check failed: HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function submitAiModification(
+  projectId: string,
+  prompt: string,
+  autoRerender: boolean = true
+): Promise<any> {
+  const res = await fetch(`${API_BASE_URL}/projects/${projectId}/modify`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt, auto_rerender: autoRerender }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => null);
+    throw new Error(err?.detail || `AI modification failed: HTTP ${res.status}`);
+  }
+  return res.json();
+}

@@ -5,6 +5,7 @@ from google import genai
 from google.genai import types
 from app.core.config import settings
 from app.schemas.script import DocumentaryScriptPlan
+from app.schemas.modification import DocumentaryModificationPlan
 from app.services.ai.adapter import BaseAIService
 
 logger = logging.getLogger(__name__)
@@ -133,6 +134,80 @@ Output the result strictly matching the structured schema.
 
         raise RuntimeError(
             f"All {num_keys} Gemini API keys failed or exhausted their quota. Last error: {str(last_exception)}"
+        )
+
+    async def parse_modification_plan(
+        self,
+        current_scenes_summary: str,
+        user_request: str
+    ) -> DocumentaryModificationPlan:
+        """
+        Interprets natural language modification requests and maps them to targeted scene deltas.
+        Preserves unaffected scenes to prevent unnecessary re-rendering.
+        """
+        if not self.is_configured():
+            raise ValueError("Gemini API key is not configured.")
+
+        system_instruction = """
+You are an award-winning YouTube Documentary Director and Senior Video Editor.
+The creator wants to revise or refine their rendered documentary based on natural language instructions.
+
+CRITICAL EDITING PRINCIPLES:
+1. TARGETED EDITS: Identify ONLY the scene(s) the creator wants to modify. NEVER change unaffected scenes.
+2. PRESERVE PACING: Ensure revised narration sounds punchy, natural, and matches documentary narration speed (~130 words/minute).
+3. VISUALS: If the creator asks to change visual/image/footage, update visual_description and stock_keywords accordingly.
+4. ON-SCREEN TEXT: If the creator asks for titles, graphics, or stats, provide updated_on_screen_text.
+5. Return strictly structured JSON matching DocumentaryModificationPlan.
+"""
+
+        user_prompt = f"""
+CURRENT DOCUMENTARY SCENES BREAKDOWN:
+{current_scenes_summary}
+
+CREATOR'S REVISION REQUEST:
+"{user_request}"
+
+Generate the targeted modification plan identifying exactly which scenes to update and what changes to apply.
+"""
+
+        num_keys = len(self.keys)
+        last_exception = None
+
+        for attempt in range(num_keys):
+            key_idx = (GeminiService._current_key_index + attempt) % num_keys
+            current_key = self.keys[key_idx]
+
+            try:
+                client = self.get_client_for_key(current_key)
+                logger.info(f"Calling Gemini modification parser using key {key_idx + 1}/{num_keys}...")
+
+                response = client.models.generate_content(
+                    model="gemini-2.5-flash",
+                    contents=user_prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=system_instruction,
+                        response_mime_type="application/json",
+                        response_schema=DocumentaryModificationPlan,
+                        temperature=0.4,
+                    ),
+                )
+
+                result_json = json.loads(response.text)
+                plan = DocumentaryModificationPlan.model_validate(result_json)
+                GeminiService._current_key_index = key_idx
+                return plan
+
+            except Exception as e:
+                error_str = str(e)
+                logger.warning(f"Gemini API key {key_idx + 1} modification error: {error_str}")
+                last_exception = e
+                if attempt < num_keys - 1:
+                    continue
+                else:
+                    break
+
+        raise RuntimeError(
+            f"All Gemini API keys failed parsing modification request: {str(last_exception)}"
         )
 
     async def plan_scenes(self, script_text: str, target_duration_minutes: int) -> Dict[str, Any]:
