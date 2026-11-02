@@ -1,4 +1,4 @@
-import { Project, ProjectCreateInput, HealthStatus } from "@/types/project";
+import { Project, ProjectCreateInput, HealthStatus, ScriptRevisionData } from "@/types/project";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
 
@@ -21,7 +21,6 @@ export async function fetchProjectById(id: string): Promise<Project> {
 }
 
 export async function createProject(input: ProjectCreateInput): Promise<Project> {
-  // Client-side guard for 20-minute hard cap
   if (input.settings.target_duration_minutes > 20) {
     throw new Error("Maximum video duration allowed is 20 minutes.");
   }
@@ -59,3 +58,37 @@ export async function deleteProject(id: string): Promise<void> {
   if (!res.ok) throw new Error(`Failed to delete project: HTTP ${res.status}`);
 }
 
+// Script & Scene Planning APIs
+export async function generateScript(projectId: string): Promise<ScriptRevisionData> {
+  const res = await fetch(`${API_BASE_URL}/projects/${projectId}/generate-script`, {
+    method: "POST",
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => null);
+    throw new Error(err?.detail || `Script generation failed: HTTP ${res.status}`);
+  }
+
+  return res.json();
+}
+
+export async function fetchScript(projectId: string): Promise<ScriptRevisionData | null> {
+  const res = await fetch(`${API_BASE_URL}/projects/${projectId}/script`, { cache: "no-store" });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`Failed to fetch script: HTTP ${res.status}`);
+  return res.json();
+}
+
+export async function updateScript(
+  projectId: string,
+  data: { title_hook?: string; full_script?: string; conclusion?: string }
+): Promise<ScriptRevisionData> {
+  const res = await fetch(`${API_BASE_URL}/projects/${projectId}/script`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+
+  if (!res.ok) throw new Error(`Failed to update script: HTTP ${res.status}`);
+  return res.json();
+}

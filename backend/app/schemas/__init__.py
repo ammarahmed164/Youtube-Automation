@@ -1,5 +1,19 @@
 from app.schemas.health import HealthResponse
-from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectResponse, ProjectSettingCreate, ProjectSettingResponse
+from app.schemas.project import (
+    ProjectCreate,
+    ProjectUpdate,
+    ProjectResponse,
+    ProjectSettingCreate,
+    ProjectSettingResponse
+)
+from app.schemas.script import (
+    ScenePlanItem,
+    ResearchCitation,
+    DocumentaryScriptPlan,
+    SceneResponse,
+    ScriptResponse,
+    ScriptUpdateInput
+)
 
 __all__ = [
     "HealthResponse",
@@ -7,5 +21,11 @@ __all__ = [
     "ProjectUpdate",
     "ProjectResponse",
     "ProjectSettingCreate",
-    "ProjectSettingResponse"
+    "ProjectSettingResponse",
+    "ScenePlanItem",
+    "ResearchCitation",
+    "DocumentaryScriptPlan",
+    "SceneResponse",
+    "ScriptResponse",
+    "ScriptUpdateInput"
 ]

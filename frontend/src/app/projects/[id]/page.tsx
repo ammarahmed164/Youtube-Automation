@@ -17,9 +17,16 @@ import {
   ShieldAlert,
   Share2,
   Trash2,
+  RefreshCw,
+  Edit3,
+  Search,
+  CheckCheck,
+  AlertCircle,
+  HelpCircle,
+  ChevronRight,
 } from "lucide-react";
-import { fetchProjectById, deleteProject } from "@/lib/api";
-import { Project } from "@/types/project";
+import { fetchProjectById, deleteProject, generateScript, fetchScript, updateScript } from "@/lib/api";
+import { Project, ScriptRevisionData } from "@/types/project";
 
 function WorkspaceContent() {
   const params = useParams();
@@ -27,27 +34,85 @@ function WorkspaceContent() {
   const projectId = params.id as string;
 
   const [project, setProject] = useState<Project | null>(null);
+  const [script, setScript] = useState<ScriptRevisionData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [generating, setGenerating] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [deleting, setDeleting] = useState(false);
+  const [activeTab, setActiveTab] = useState<"scenes" | "script" | "sources">("scenes");
+
+  // Editable script states
+  const [editableScript, setEditableScript] = useState("");
+  const [editableHook, setEditableHook] = useState("");
+  const [editableConclusion, setEditableConclusion] = useState("");
+  const [isEditing, setIsEditing] = useState(false);
 
   useEffect(() => {
     if (!projectId) return;
-    fetchProjectById(projectId)
-      .then((data) => setProject(data))
-      .catch((err) => setError(err.message || "Failed to load project"))
-      .finally(() => setLoading(false));
+
+    async function loadData() {
+      try {
+        const proj = await fetchProjectById(projectId);
+        setProject(proj);
+        const sc = await fetchScript(projectId);
+        if (sc) {
+          setScript(sc);
+          setEditableScript(sc.full_script);
+          setEditableHook(sc.title_hook || "");
+          setEditableConclusion(sc.conclusion || "");
+        }
+      } catch (err: any) {
+        setError(err.message || "Failed to load project workspace");
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadData();
   }, [projectId]);
+
+  const handleGenerateScript = async () => {
+    setGenerating(true);
+    setError(null);
+    try {
+      const newScript = await generateScript(projectId);
+      setScript(newScript);
+      setEditableScript(newScript.full_script);
+      setEditableHook(newScript.title_hook || "");
+      setEditableConclusion(newScript.conclusion || "");
+      // Refresh project to get updated status ('script_review')
+      const updatedProj = await fetchProjectById(projectId);
+      setProject(updatedProj);
+    } catch (err: any) {
+      setError(err.message || "Script generation failed.");
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const handleSaveScriptEdits = async () => {
+    setSaving(true);
+    try {
+      const updated = await updateScript(projectId, {
+        title_hook: editableHook,
+        full_script: editableScript,
+        conclusion: editableConclusion,
+      });
+      setScript(updated);
+      setIsEditing(false);
+    } catch (err: any) {
+      alert(err.message || "Failed to save script edits");
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const handleDelete = async () => {
     if (!confirm("Are you sure you want to delete this documentary project from Supabase?")) return;
-    setDeleting(true);
     try {
       await deleteProject(projectId);
       router.push("/");
     } catch (err: any) {
       alert(err.message || "Failed to delete project");
-      setDeleting(false);
     }
   };
 
@@ -59,16 +124,13 @@ function WorkspaceContent() {
     );
   }
 
-  if (error || !project) {
+  if (!project) {
     return (
       <div className="max-w-xl mx-auto py-20 px-6 text-center space-y-4">
         <div className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-300 text-sm">
           {error || "Project not found"}
         </div>
-        <Link
-          href="/"
-          className="inline-flex items-center gap-2 text-sm text-slate-400 hover:text-white transition-colors"
-        >
+        <Link href="/" className="inline-flex items-center gap-2 text-sm text-slate-400 hover:text-white">
           <ArrowLeft className="w-4 h-4" />
           Back to Dashboard
         </Link>
@@ -92,11 +154,10 @@ function WorkspaceContent() {
 
         <button
           onClick={handleDelete}
-          disabled={deleting}
           className="flex items-center gap-1.5 text-xs text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 px-3 py-1.5 rounded-lg border border-rose-500/20 transition-all"
         >
           <Trash2 className="w-3.5 h-3.5" />
-          <span>{deleting ? "Deleting..." : "Delete Project"}</span>
+          <span>Delete Project</span>
         </button>
       </div>
 
@@ -111,6 +172,11 @@ function WorkspaceContent() {
               <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-rose-500/10 text-rose-400 border border-rose-500/20 uppercase tracking-wide">
                 {project.status.replace("_", " ")}
               </span>
+              {script && (
+                <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+                  Revision v{script.revision_number}
+                </span>
+              )}
             </div>
             <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">{project.title}</h1>
             <p className="text-slate-400 text-sm leading-relaxed">{project.topic}</p>
@@ -151,75 +217,340 @@ function WorkspaceContent() {
         )}
       </div>
 
-      {/* Production Pipeline Roadmap Stages */}
-      <div className="space-y-4">
-        <h2 className="text-base font-bold text-white flex items-center gap-2">
-          <Layers className="w-4 h-4 text-rose-400" />
-          Documentary Production Workspace
-        </h2>
+      {/* Error Alert */}
+      {error && (
+        <div className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-300 text-sm flex items-center gap-3">
+          <AlertCircle className="w-5 h-5 shrink-0 text-rose-400" />
+          <span>{error}</span>
+        </div>
+      )}
 
-        <div className="grid grid-cols-1 sm:grid-cols-5 gap-3">
-          {[
-            {
-              title: "1. Script & Research",
-              desc: "Gemini AI narrative hook & structured scene plan.",
-              status: "Phase 4 Ready",
-              icon: FileText,
-              color: "text-rose-400",
-            },
-            {
-              title: "2. Voice & Assets",
-              desc: "Piper TTS audio & Pexels footage hunter.",
-              status: "Phase 5",
-              icon: Mic,
-              color: "text-amber-400",
-            },
-            {
-              title: "3. FFmpeg Rendering",
-              desc: "Compile 1080p MP4, transitions, music & subtitles.",
-              status: "Phase 6",
-              icon: Video,
-              color: "text-blue-400",
-            },
-            {
-              title: "4. QC & Modifications",
-              desc: "Automated checks & natural-language AI revisions.",
-              status: "Phase 7",
-              icon: Sparkles,
-              color: "text-indigo-400",
-            },
-            {
-              title: "5. YouTube Publishing",
-              desc: "Mandatory human approval gate tied to hash.",
-              status: "Phase 8",
-              icon: Share2,
-              color: "text-emerald-400",
-            },
-          ].map((step, idx) => {
-            const Icon = step.icon;
-            return (
-              <div
-                key={idx}
-                className="p-4 rounded-2xl border border-slate-800 bg-slate-900/40 space-y-3 flex flex-col justify-between"
+      {/* PHASE 4: Script & Scene Planning Workspace */}
+      <div className="rounded-3xl border border-slate-800 bg-slate-900/40 p-6 sm:p-8 space-y-6">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <div className="inline-flex items-center gap-2 text-xs font-semibold text-rose-400 mb-1">
+              <FileText className="w-3.5 h-3.5" />
+              Phase 4 &bull; Research, Script & Scene Planning
+            </div>
+            <h2 className="text-xl font-bold text-white">Documentary Script & Scene Breakdown</h2>
+          </div>
+
+          <div className="flex items-center gap-3">
+            {script ? (
+              <button
+                onClick={handleGenerateScript}
+                disabled={generating}
+                className="flex items-center gap-2 text-xs font-semibold px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-all"
               >
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <Icon className={`w-4 h-4 ${step.color}`} />
-                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-800 text-slate-400">
-                      {step.status}
-                    </span>
+                <RefreshCw className={`w-3.5 h-3.5 ${generating ? "animate-spin" : ""}`} />
+                <span>{generating ? "Regenerating..." : "Regenerate with Gemini"}</span>
+              </button>
+            ) : (
+              <button
+                onClick={handleGenerateScript}
+                disabled={generating}
+                className="flex items-center gap-2 text-xs font-semibold px-5 py-2.5 rounded-xl bg-gradient-to-r from-rose-600 to-rose-500 hover:from-rose-500 hover:to-rose-400 text-white shadow-lg shadow-rose-950/50 transition-all hover:scale-[1.02]"
+              >
+                <Sparkles className={`w-4 h-4 ${generating ? "animate-spin" : ""}`} />
+                <span>{generating ? "Generating with Gemini..." : "Generate Script with Gemini"}</span>
+              </button>
+            )}
+          </div>
+        </div>
+
+        {generating ? (
+          /* Generation Loading State */
+          <div className="py-20 text-center space-y-4">
+            <div className="w-12 h-12 rounded-2xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center mx-auto text-rose-400 animate-spin">
+              <Sparkles className="w-6 h-6" />
+            </div>
+            <div className="space-y-1">
+              <h3 className="font-bold text-base text-white">Gemini is writing your documentary...</h3>
+              <p className="text-xs text-slate-400 max-w-md mx-auto">
+                Researching verified facts, pacing narration for {s?.target_duration_minutes || 10} minutes, and breaking down structured scenes.
+              </p>
+            </div>
+          </div>
+        ) : !script ? (
+          /* Empty Script State */
+          <div className="rounded-2xl border border-dashed border-slate-800 bg-slate-950/40 p-12 text-center space-y-4">
+            <div className="w-12 h-12 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-center mx-auto text-slate-400">
+              <FileText className="w-6 h-6" />
+            </div>
+            <div className="space-y-1 max-w-md mx-auto">
+              <h3 className="font-bold text-base text-white">No script generated yet</h3>
+              <p className="text-xs text-slate-400">
+                Click the button above to have Google Gemini generate a structured documentary script with research citations and scene directions.
+              </p>
+            </div>
+            <button
+              onClick={handleGenerateScript}
+              className="inline-flex items-center gap-2 bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold px-4 py-2 rounded-xl shadow-md transition-all"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>Start Script Generation</span>
+            </button>
+          </div>
+        ) : (
+          /* Script Generated Review Workspace */
+          <div className="space-y-6">
+            {/* Title Hook Banner */}
+            {script.title_hook && (
+              <div className="p-4 rounded-2xl bg-rose-500/5 border border-rose-500/20 space-y-1">
+                <span className="text-[11px] font-bold text-rose-400 uppercase tracking-wider">Opening Hook</span>
+                <p className="text-sm font-semibold text-white italic">"{script.title_hook}"</p>
+              </div>
+            )}
+
+            {/* Navigation Tabs */}
+            <div className="flex items-center gap-2 border-b border-slate-800 pb-2">
+              <button
+                onClick={() => setActiveTab("scenes")}
+                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-colors ${
+                  activeTab === "scenes"
+                    ? "bg-slate-800 text-white shadow-sm"
+                    : "text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                <Layers className="w-3.5 h-3.5" />
+                <span>Scene Breakdown ({script.scenes.length})</span>
+              </button>
+
+              <button
+                onClick={() => setActiveTab("script")}
+                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-colors ${
+                  activeTab === "script"
+                    ? "bg-slate-800 text-white shadow-sm"
+                    : "text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                <FileText className="w-3.5 h-3.5" />
+                <span>Continuous Script</span>
+              </button>
+
+              <button
+                onClick={() => setActiveTab("sources")}
+                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-colors ${
+                  activeTab === "sources"
+                    ? "bg-slate-800 text-white shadow-sm"
+                    : "text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                <CheckCheck className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Fact-Check & Citations ({script.research_sources?.length || 0})</span>
+              </button>
+            </div>
+
+            {/* Tab 1: Scene Breakdown */}
+            {activeTab === "scenes" && (
+              <div className="space-y-4">
+                {script.scenes.map((scene) => (
+                  <div
+                    key={scene.id || scene.scene_id_str}
+                    className="p-5 rounded-2xl border border-slate-800 bg-slate-950/60 space-y-3 hover:border-slate-700 transition-colors"
+                  >
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                      <div className="flex items-center gap-2">
+                        <span className="w-6 h-6 rounded-lg bg-rose-500/10 text-rose-400 font-bold flex items-center justify-center text-xs">
+                          {scene.scene_order}
+                        </span>
+                        <h4 className="font-bold text-sm text-white">{scene.scene_title || scene.scene_id_str}</h4>
+                      </div>
+
+                      <div className="flex items-center gap-2 text-[11px]">
+                        <span className="px-2 py-0.5 rounded-md bg-slate-900 border border-slate-800 text-emerald-400 font-medium">
+                          ~{scene.estimated_duration_seconds ? Math.round(scene.estimated_duration_seconds) : 30}s
+                        </span>
+                        <span className="px-2 py-0.5 rounded-md bg-slate-900 border border-slate-800 text-slate-300 capitalize">
+                          {scene.preferred_visual_type.replace(/_/g, " ")}
+                        </span>
+                        <span className="px-2 py-0.5 rounded-md bg-slate-900 border border-slate-800 text-slate-400">
+                          {scene.transition_preference}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Narration Script */}
+                    <div className="p-3.5 rounded-xl bg-slate-900/60 border border-slate-800/80">
+                      <span className="text-[10px] font-bold text-indigo-400 uppercase tracking-wider block mb-1">
+                        Voiceover Narration
+                      </span>
+                      <p className="text-xs text-slate-200 leading-relaxed font-sans">{scene.narration_text}</p>
+                    </div>
+
+                    {/* Visual Direction & Keywords */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                      <div className="space-y-1">
+                        <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                          Visual Direction:
+                        </span>
+                        <p className="text-slate-400 text-[11px] leading-relaxed">{scene.visual_description}</p>
+                      </div>
+
+                      <div className="space-y-1">
+                        <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                          Stock Keywords (Pexels):
+                        </span>
+                        <div className="flex flex-wrap gap-1">
+                          {scene.stock_keywords && scene.stock_keywords.length > 0 ? (
+                            scene.stock_keywords.map((kw, i) => (
+                              <span
+                                key={i}
+                                className="px-2 py-0.5 rounded-md bg-slate-800 text-[10px] text-slate-300 font-mono"
+                              >
+                                #{kw}
+                              </span>
+                            ))
+                          ) : (
+                            <span className="text-slate-500 text-[11px]">No keywords</span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {scene.on_screen_text && (
+                      <div className="pt-2 border-t border-slate-900 flex items-center gap-2 text-[11px] text-amber-400">
+                        <span className="font-semibold">On-Screen Text:</span>
+                        <span>"{scene.on_screen_text}"</span>
+                      </div>
+                    )}
                   </div>
-                  <h3 className="font-bold text-xs text-white">{step.title}</h3>
-                  <p className="text-[11px] text-slate-400 mt-1 leading-snug">{step.desc}</p>
+                ))}
+              </div>
+            )}
+
+            {/* Tab 2: Full Continuous Script Editor */}
+            {activeTab === "script" && (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-slate-400">
+                    Review and polish the entire documentary narration before proceeding to voiceover.
+                  </span>
+                  {!isEditing ? (
+                    <button
+                      onClick={() => setIsEditing(true)}
+                      className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg bg-slate-800 text-slate-200 hover:bg-slate-700"
+                    >
+                      <Edit3 className="w-3.5 h-3.5" />
+                      <span>Edit Script</span>
+                    </button>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => setIsEditing(false)}
+                        className="text-xs text-slate-400 hover:text-white px-2 py-1"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={handleSaveScriptEdits}
+                        disabled={saving}
+                        className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg bg-rose-600 text-white hover:bg-rose-500"
+                      >
+                        <span>{saving ? "Saving..." : "Save Edits"}</span>
+                      </button>
+                    </div>
+                  )}
                 </div>
 
-                <div className="pt-2 border-t border-slate-800/60">
-                  <span className="text-[10px] text-slate-500 font-medium">Stage {idx + 1} of 5</span>
+                {isEditing ? (
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-400 mb-1">Title Hook:</label>
+                      <input
+                        type="text"
+                        value={editableHook}
+                        onChange={(e) => setEditableHook(e.target.value)}
+                        className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs focus:outline-none focus:border-rose-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-400 mb-1">Full Script Text:</label>
+                      <textarea
+                        rows={12}
+                        value={editableScript}
+                        onChange={(e) => setEditableScript(e.target.value)}
+                        className="w-full p-4 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs leading-relaxed focus:outline-none focus:border-rose-500 font-mono resize-y"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-400 mb-1">Conclusion / Outro:</label>
+                      <input
+                        type="text"
+                        value={editableConclusion}
+                        onChange={(e) => setEditableConclusion(e.target.value)}
+                        className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs focus:outline-none focus:border-rose-500"
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-6 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-4">
+                    <p className="text-xs text-slate-200 leading-loose whitespace-pre-line font-sans">
+                      {script.full_script}
+                    </p>
+                    {script.conclusion && (
+                      <div className="pt-4 border-t border-slate-800/80">
+                        <span className="text-[10px] font-bold text-amber-400 uppercase tracking-wider block mb-1">
+                          Conclusion
+                        </span>
+                        <p className="text-xs text-slate-300 italic">{script.conclusion}</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Tab 3: Fact-Check Citations */}
+            {activeTab === "sources" && (
+              <div className="space-y-3">
+                {script.research_sources && script.research_sources.length > 0 ? (
+                  script.research_sources.map((item, i) => (
+                    <div
+                      key={i}
+                      className="p-4 rounded-2xl bg-slate-950/60 border border-slate-800 flex items-start gap-3"
+                    >
+                      <CheckCheck className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-bold text-white">{item.claim}</span>
+                          <span className="text-[10px] font-semibold px-2 py-0.2 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 capitalize">
+                            {item.verification_status}
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-400">{item.source_note}</p>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="py-8 text-center text-xs text-slate-500">
+                    No research citations recorded for this script.
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Ready for Phase 5 Banner */}
+            <div className="p-4 rounded-2xl bg-emerald-500/5 border border-emerald-500/20 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+                <div>
+                  <h4 className="text-xs font-bold text-white">Script & Scenes Review Ready</h4>
+                  <p className="text-[11px] text-slate-400">
+                    Scenes are structured with timing and visual directions for Phase 5 (Voiceover & Assets).
+                  </p>
                 </div>
               </div>
-            );
-          })}
-        </div>
+
+              <div className="flex items-center gap-2 text-xs text-slate-400">
+                <span className="font-semibold text-emerald-400">{script.scenes.length} Scenes</span>
+                <span>&bull;</span>
+                <span>Paced for ~{s?.target_duration_minutes} Mins</span>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Safety & Approval Notice */}
@@ -235,9 +566,12 @@ function WorkspaceContent() {
 
 export default function ProjectWorkspacePage() {
   return (
-    <Suspense fallback={<div className="max-w-5xl mx-auto py-20 px-6 text-center text-slate-400 text-sm">Loading workspace...</div>}>
+    <Suspense
+      fallback={
+        <div className="max-w-5xl mx-auto py-20 px-6 text-center text-slate-400 text-sm">Loading workspace...</div>
+      }
+    >
       <WorkspaceContent />
     </Suspense>
   );
 }
-

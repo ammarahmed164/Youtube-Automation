@@ -59,3 +59,35 @@ export interface HealthStatus {
   };
 }
 
+export interface SceneItem {
+  id: string;
+  scene_order: number;
+  scene_id_str: string;
+  scene_title?: string | null;
+  purpose?: string | null;
+  narration_text: string;
+  estimated_duration_seconds?: number | null;
+  actual_audio_duration_seconds?: number | null;
+  visual_description?: string | null;
+  preferred_visual_type: string;
+  stock_keywords?: string[] | null;
+  image_prompt?: string | null;
+  on_screen_text?: string | null;
+  transition_preference: string;
+}
+
+export interface ScriptRevisionData {
+  id: string;
+  project_id: string;
+  revision_number: number;
+  title_hook?: string | null;
+  full_script: string;
+  conclusion?: string | null;
+  research_sources?: Array<{
+    claim: string;
+    source_note: string;
+    verification_status: string;
+  }> | null;
+  created_at: string;
+  scenes: SceneItem[];
+}
