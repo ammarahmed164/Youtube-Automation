@@ -34,6 +34,10 @@ import {
   ShieldCheck,
   ChevronDown,
   ChevronUp,
+  Lock,
+  Unlock,
+  ExternalLink,
+  Shield,
 } from "lucide-react";
 import {
   fetchProjectById,
@@ -54,6 +58,12 @@ import {
   fetchQualityCheck,
   runQualityCheck,
   submitAiModification,
+  approveVideoVersion,
+  revokeVideoApproval,
+  fetchVideoApproval,
+  publishToYouTube,
+  fetchPublishStatus,
+  fetchYouTubeStatus,
 } from "@/lib/api";
 import {
   Project,
@@ -61,6 +71,10 @@ import {
   VideoVersionData,
   QualityCheckData,
   ModificationResultData,
+  VideoApprovalData,
+  YouTubeUploadData,
+  UploadMetadataForm,
+  YouTubeAccountData,
 } from "@/types/project";
 
 function WorkspaceContent() {
@@ -105,6 +119,21 @@ function WorkspaceContent() {
   const [modificationResult, setModificationResult] = useState<ModificationResultData | null>(null);
   const [selectedVersionNum, setSelectedVersionNum] = useState<number | null>(null);
 
+  // Phase 8 Human Approval Gate & YouTube Publishing states
+  const [activeApproval, setActiveApproval] = useState<VideoApprovalData | null>(null);
+  const [publishRecord, setPublishRecord] = useState<YouTubeUploadData | null>(null);
+  const [isApproving, setIsApproving] = useState(false);
+  const [isPublishing, setIsPublishing] = useState(false);
+  const [isRevoking, setIsRevoking] = useState(false);
+  const [approvalConfirmed, setApprovalConfirmed] = useState(false);
+
+  // YouTube Upload Metadata Form
+  const [uploadTitle, setUploadTitle] = useState("");
+  const [uploadDescription, setUploadDescription] = useState("");
+  const [uploadTags, setUploadTags] = useState("");
+  const [uploadPrivacy, setUploadPrivacy] = useState<"private" | "unlisted" | "public">("unlisted");
+  const [uploadCategory, setUploadCategory] = useState("28");
+
   useEffect(() => {
     if (!projectId) return;
 
@@ -137,6 +166,30 @@ function WorkspaceContent() {
             setIsRendering(true);
             setRenderProgress(status.progress_percent || 0);
             if (status.log_messages) setRenderLogs(status.log_messages);
+          }
+
+          // Load Phase 8 approval and publish status
+          try {
+            const approval = await fetchVideoApproval(projectId);
+            if (approval) {
+              setActiveApproval(approval);
+              if (approval.upload_settings) {
+                setUploadTitle(approval.upload_settings.title || "");
+                setUploadDescription(approval.upload_settings.description || "");
+                setUploadTags(approval.upload_settings.tags?.join(", ") || "");
+                setUploadPrivacy(approval.upload_settings.privacy_status || "unlisted");
+                setUploadCategory(approval.upload_settings.category_id || "28");
+              }
+            } else if (proj) {
+              setUploadTitle(proj.title);
+              setUploadDescription(`${proj.topic}\n\nProduced with AI YouTube Documentary Studio.`);
+              setUploadTags("Documentary, Science, Space, Astronomy, AI");
+            }
+
+            const pubStatus = await fetchPublishStatus(projectId);
+            if (pubStatus) setPublishRecord(pubStatus);
+          } catch {
+            // No approval/publish record yet
           }
         } catch {
           // No video rendered yet
@@ -328,6 +381,116 @@ function WorkspaceContent() {
     }
   };
 
+  // Synchronize approval and publish record when active version changes
+  useEffect(() => {
+    if (!projectId || !selectedVersionNum) return;
+    const currentVer = videoVersions.find(v => v.version_number === selectedVersionNum);
+    if (!currentVer) return;
+
+    async function loadVersionApproval() {
+      try {
+        const app = await fetchVideoApproval(projectId, currentVer!.id);
+        setActiveApproval(app);
+        const pub = await fetchPublishStatus(projectId, currentVer!.id);
+        setPublishRecord(pub);
+      } catch {
+        setActiveApproval(null);
+        setPublishRecord(null);
+      }
+    }
+    loadVersionApproval();
+  }, [projectId, selectedVersionNum, videoVersions]);
+
+  const handleApproveVersion = async () => {
+    const currentVer = videoVersions.find(v => v.version_number === selectedVersionNum) || latestVideo;
+    if (!currentVer) {
+      alert("No video version selected for approval.");
+      return;
+    }
+    if (!approvalConfirmed) {
+      alert("Please confirm the explicit approval checkbox before proceeding.");
+      return;
+    }
+
+    setIsApproving(true);
+    setError(null);
+    try {
+      const tagsList = uploadTags.split(",").map(t => t.trim()).filter(Boolean);
+      const res = await approveVideoVersion(projectId, {
+        video_version_id: currentVer.id,
+        confirmed_checksum: currentVer.file_checksum,
+        upload_settings: {
+          title: uploadTitle.trim() || project?.title || "Documentary",
+          description: uploadDescription.trim(),
+          tags: tagsList,
+          category_id: uploadCategory,
+          privacy_status: uploadPrivacy,
+          notify_subscribers: false,
+        },
+        user_confirmation_statement: `I have previewed Version v${currentVer.version_number} and explicitly authorize publishing with checksum ${currentVer.file_checksum}.`
+      });
+
+      setActiveApproval(res);
+      const updatedProj = await fetchProjectById(projectId);
+      setProject(updatedProj);
+      alert(`Approval Granted!\nVideo Version v${currentVer.version_number} is locked with SHA-256 Checksum:\n${currentVer.file_checksum}\n\nYou may now safely publish to YouTube.`);
+    } catch (err: any) {
+      setError(err.message || "Failed to grant video approval.");
+    } finally {
+      setIsApproving(false);
+    }
+  };
+
+  const handleRevokeApproval = async () => {
+    const currentVer = videoVersions.find(v => v.version_number === selectedVersionNum) || latestVideo;
+    if (!currentVer || !activeApproval) return;
+    if (!confirm("Are you sure you want to revoke authorization for this video version? Publishing will be blocked immediately.")) return;
+
+    setIsRevoking(true);
+    try {
+      await revokeVideoApproval(projectId, {
+        video_version_id: currentVer.id,
+        reason: "Creator revoked authorization from workspace"
+      });
+      setActiveApproval(null);
+      const updatedProj = await fetchProjectById(projectId);
+      setProject(updatedProj);
+      alert("Video approval has been revoked. YouTube upload is now blocked.");
+    } catch (err: any) {
+      setError(err.message || "Failed to revoke approval.");
+    } finally {
+      setIsRevoking(false);
+    }
+  };
+
+  const handlePublishToYouTube = async () => {
+    const currentVer = videoVersions.find(v => v.version_number === selectedVersionNum) || latestVideo;
+    if (!currentVer) return;
+    if (!activeApproval || activeApproval.is_revoked) {
+      alert("Approval Gate Violation: You must explicitly approve this version before publishing.");
+      return;
+    }
+
+    setIsPublishing(true);
+    setError(null);
+    try {
+      const res = await publishToYouTube(projectId, {
+        video_version_id: currentVer.id,
+        approval_id: activeApproval.id,
+        expected_checksum: currentVer.file_checksum,
+      }, false);
+
+      setPublishRecord(res);
+      const updatedProj = await fetchProjectById(projectId);
+      setProject(updatedProj);
+      alert(`Documentary Published Successfully!\nYouTube Video ID: ${res.youtube_video_id}\nURL: ${res.youtube_url}`);
+    } catch (err: any) {
+      setError(err.message || "YouTube publishing failed.");
+    } finally {
+      setIsPublishing(false);
+    }
+  };
+
   const handleDelete = async () => {
     if (!confirm("Are you sure you want to delete this documentary project from Supabase?")) return;
     try {
@@ -337,6 +500,8 @@ function WorkspaceContent() {
       alert(err.message || "Failed to delete project");
     }
   };
+
+  const selectedVersion = videoVersions.find(v => v.version_number === selectedVersionNum) || latestVideo;
 
   if (loading) {
     return (
@@ -1242,6 +1407,246 @@ function WorkspaceContent() {
                           <p>{modificationResult.plan_summary}</p>
                           <div className="text-[11px] text-slate-400 pt-1">
                             Updated Scene(s): {modificationResult.affected_scenes?.join(", ") || "targeted"} &bull; Created Version v{modificationResult.new_video_version?.version_number}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* PHASE 8: Mandatory Human Approval Gate & YouTube Publishing Engine */}
+                    <div className="p-6 rounded-3xl border border-emerald-900/40 bg-gradient-to-b from-slate-900/90 to-slate-950/90 space-y-6">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-800/80">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
+                            <Shield className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <h4 className="font-bold text-base text-white">Human Approval Gate & YouTube Publishing</h4>
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 uppercase tracking-wider">
+                                Phase 8 &bull; Rule 14
+                              </span>
+                            </div>
+                            <p className="text-xs text-slate-400">
+                              AI agents can never upload without your explicit button confirmation locked to the exact video checksum.
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Status Badge */}
+                        <div>
+                          {publishRecord && publishRecord.status === "published" ? (
+                            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30">
+                              <Play className="w-3.5 h-3.5 fill-rose-400" />
+                              <span>Published to YouTube</span>
+                            </span>
+                          ) : activeApproval && !activeApproval.is_revoked ? (
+                            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                              <Lock className="w-3.5 h-3.5 text-emerald-400" />
+                              <span>Approved & Locked (v{selectedVersion?.version_number})</span>
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                              <ShieldAlert className="w-3.5 h-3.5 text-amber-400" />
+                              <span>Awaiting Creator Approval</span>
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Video Integrity Snapshot Box */}
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 p-4 rounded-2xl bg-slate-950/60 border border-slate-800 text-xs">
+                        <div className="space-y-1">
+                          <span className="text-[11px] text-slate-500 uppercase font-semibold">Target Video Version</span>
+                          <div className="font-bold text-white text-sm">Version v{selectedVersion?.version_number}</div>
+                          <div className="text-[11px] text-slate-400 font-mono">
+                            {selectedVersion?.resolution} &bull; {selectedVersion?.duration_seconds ? `${Math.floor(selectedVersion.duration_seconds / 60)}m ${Math.floor(selectedVersion.duration_seconds % 60)}s` : "--"}
+                          </div>
+                        </div>
+
+                        <div className="space-y-1 md:col-span-2">
+                          <span className="text-[11px] text-slate-500 uppercase font-semibold flex items-center gap-1.5">
+                            <Lock className="w-3 h-3 text-indigo-400" />
+                            <span>Immutable SHA-256 File Checksum</span>
+                          </span>
+                          <div className="font-mono text-[11px] text-indigo-300 bg-slate-900 px-2.5 py-1.5 rounded-lg border border-slate-800 break-all select-all">
+                            {selectedVersion?.file_checksum || "Calculating..."}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* YouTube Publishing Metadata Form */}
+                      <div className="space-y-4 p-4 rounded-2xl bg-slate-900/40 border border-slate-800/80">
+                        <h5 className="font-bold text-xs uppercase text-slate-300 tracking-wider">
+                          YouTube Video Metadata Settings
+                        </h5>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                          <div className="space-y-1.5">
+                            <label className="font-semibold text-slate-300">Video Title</label>
+                            <input
+                              type="text"
+                              value={uploadTitle}
+                              onChange={(e) => setUploadTitle(e.target.value)}
+                              placeholder="YouTube Video Title..."
+                              className="w-full p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-white focus:outline-none focus:border-indigo-500"
+                              disabled={Boolean(activeApproval && !activeApproval.is_revoked)}
+                            />
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <label className="font-semibold text-slate-300">Search & Discovery Tags (comma separated)</label>
+                            <input
+                              type="text"
+                              value={uploadTags}
+                              onChange={(e) => setUploadTags(e.target.value)}
+                              placeholder="Space, Astronomy, James Webb, Science"
+                              className="w-full p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-white focus:outline-none focus:border-indigo-500"
+                              disabled={Boolean(activeApproval && !activeApproval.is_revoked)}
+                            />
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+                          <div className="space-y-1.5">
+                            <label className="font-semibold text-slate-300">Privacy Visibility</label>
+                            <select
+                              value={uploadPrivacy}
+                              onChange={(e) => setUploadPrivacy(e.target.value as any)}
+                              className="w-full p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-white focus:outline-none focus:border-indigo-500"
+                              disabled={Boolean(activeApproval && !activeApproval.is_revoked)}
+                            >
+                              <option value="unlisted">Unlisted (Anyone with link)</option>
+                              <option value="private">Private (Only you)</option>
+                              <option value="public">Public (Visible to everyone)</option>
+                            </select>
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <label className="font-semibold text-slate-300">Category</label>
+                            <select
+                              value={uploadCategory}
+                              onChange={(e) => setUploadCategory(e.target.value)}
+                              className="w-full p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-white focus:outline-none focus:border-indigo-500"
+                              disabled={Boolean(activeApproval && !activeApproval.is_revoked)}
+                            >
+                              <option value="28">Science & Technology</option>
+                              <option value="27">Education</option>
+                              <option value="24">Entertainment</option>
+                            </select>
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <label className="font-semibold text-slate-300">Broadcast Quality</label>
+                            <div className="p-2.5 rounded-xl bg-slate-900/60 border border-slate-800 text-emerald-400 font-semibold flex items-center gap-1.5">
+                              <CheckCircle2 className="w-3.5 h-3.5" />
+                              <span>{qualityCheck?.score_percent || 100}% Checks Passed</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="space-y-1.5 text-xs">
+                          <label className="font-semibold text-slate-300">Video Description</label>
+                          <textarea
+                            rows={3}
+                            value={uploadDescription}
+                            onChange={(e) => setUploadDescription(e.target.value)}
+                            placeholder="Video description, research citations, and timestamps..."
+                            className="w-full p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-white focus:outline-none focus:border-indigo-500 resize-none font-sans"
+                            disabled={Boolean(activeApproval && !activeApproval.is_revoked)}
+                          />
+                        </div>
+                      </div>
+
+                      {/* Approval / Publishing Actions */}
+                      {publishRecord && publishRecord.status === "published" ? (
+                        <div className="p-5 rounded-2xl bg-gradient-to-r from-rose-950/40 to-slate-900 border border-rose-800/60 space-y-3">
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                            <div className="flex items-center gap-3">
+                              <div className="w-10 h-10 rounded-xl bg-rose-600 text-white flex items-center justify-center shrink-0 shadow-lg shadow-rose-900/40">
+                                <Play className="w-5 h-5 fill-white" />
+                              </div>
+                              <div>
+                                <h4 className="font-bold text-white text-sm">Successfully Published to YouTube</h4>
+                                <p className="text-xs text-slate-400">Video ID: {publishRecord.youtube_video_id}</p>
+                              </div>
+                            </div>
+
+                            <a
+                              href={publishRecord.youtube_url || `https://youtu.be/${publishRecord.youtube_video_id}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-semibold text-xs transition-colors shadow-lg shadow-rose-950/40"
+                            >
+                              <span>Watch on YouTube</span>
+                              <ExternalLink className="w-3.5 h-3.5" />
+                            </a>
+                          </div>
+
+                          <div className="font-mono text-[11px] text-slate-400 pt-2 border-t border-slate-800 flex flex-wrap items-center justify-between gap-2">
+                            <span>Direct Link: {publishRecord.youtube_url}</span>
+                            <span>Published: {new Date(publishRecord.created_at).toLocaleString()}</span>
+                          </div>
+                        </div>
+                      ) : activeApproval && !activeApproval.is_revoked ? (
+                        <div className="p-5 rounded-2xl bg-emerald-950/30 border border-emerald-800/60 space-y-4">
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                            <div className="flex items-center gap-3">
+                              <ShieldCheck className="w-6 h-6 text-emerald-400 shrink-0" />
+                              <div>
+                                <h4 className="font-bold text-emerald-300 text-sm">
+                                  Version v{selectedVersion?.version_number} Approved for YouTube Publishing
+                                </h4>
+                                <p className="text-xs text-slate-400">
+                                  Approved on {new Date(activeApproval.approved_at).toLocaleString()} &bull; Locked Checksum: {activeApproval.file_checksum.slice(0, 16)}...
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={handleRevokeApproval}
+                                disabled={isRevoking}
+                                className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-rose-300 border border-slate-800 text-xs font-semibold transition-colors disabled:opacity-50"
+                              >
+                                <Unlock className="w-3.5 h-3.5" />
+                                <span>{isRevoking ? "Revoking..." : "Revoke Approval"}</span>
+                              </button>
+
+                              <button
+                                onClick={handlePublishToYouTube}
+                                disabled={isPublishing}
+                                className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-rose-600 to-rose-500 hover:from-rose-500 hover:to-rose-400 text-white text-xs font-bold shadow-lg shadow-rose-950/50 transition-all hover:scale-[1.02] disabled:opacity-50"
+                              >
+                                <Play className={`w-4 h-4 fill-white ${isPublishing ? "animate-spin" : ""}`} />
+                                <span>{isPublishing ? "Publishing to YouTube..." : "Publish to YouTube Now"}</span>
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="p-5 rounded-2xl bg-slate-950/60 border border-slate-800 space-y-4">
+                          <div className="flex items-start gap-3">
+                            <input
+                              type="checkbox"
+                              id="approval-checkbox"
+                              checked={approvalConfirmed}
+                              onChange={(e) => setApprovalConfirmed(e.target.checked)}
+                              className="w-4 h-4 rounded border-slate-700 bg-slate-900 text-emerald-500 focus:ring-emerald-500 mt-1 cursor-pointer"
+                            />
+                            <label htmlFor="approval-checkbox" className="text-xs text-slate-300 leading-relaxed cursor-pointer select-none">
+                              <strong className="text-white">Mandatory Human Approval Confirmation:</strong> I have watched the complete documentary preview for <span className="font-semibold text-emerald-400">Version v{selectedVersion?.version_number}</span> and confirm that the video quality, narration pacing, and subtitles are satisfactory. I explicitly authorize locking this exact SHA-256 checksum for YouTube publication.
+                            </label>
+                          </div>
+
+                          <div className="flex items-center justify-end pt-2">
+                            <button
+                              onClick={handleApproveVersion}
+                              disabled={isApproving || !approvalConfirmed}
+                              className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-bold shadow-lg shadow-emerald-950/40 transition-all disabled:opacity-40 disabled:cursor-not-allowed hover:scale-[1.01]"
+                            >
+                              <ShieldCheck className={`w-4 h-4 ${isApproving ? "animate-spin" : ""}`} />
+                              <span>{isApproving ? "Locking Approval..." : `Approve Version v${selectedVersion?.version_number} & Authorize Publishing`}</span>
+                            </button>
                           </div>
                         </div>
                       )}

@@ -1,19 +1,23 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Settings as SettingsIcon, Database, ShieldAlert, Cpu, Key, CheckCircle2, XCircle } from "lucide-react";
-import { fetchHealth } from "@/lib/api";
-import { HealthStatus } from "@/types/project";
+import { Settings as SettingsIcon, Database, ShieldAlert, Cpu, Key, CheckCircle2, XCircle, ExternalLink, Play } from "lucide-react";
+import { fetchHealth, fetchYouTubeStatus, fetchYouTubeAuthUrl } from "@/lib/api";
+import { HealthStatus, YouTubeAccountData } from "@/types/project";
 
 export default function SettingsPage() {
   const [health, setHealth] = useState<HealthStatus | null>(null);
+  const [ytStatus, setYtStatus] = useState<YouTubeAccountData | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetchHealth()
-      .then((data) => setHealth(data))
-      .catch(() => null)
-      .finally(() => setLoading(false));
+    Promise.all([
+      fetchHealth().catch(() => null),
+      fetchYouTubeStatus().catch(() => null)
+    ]).then(([h, yt]) => {
+      if (h) setHealth(h);
+      if (yt) setYtStatus(yt);
+    }).finally(() => setLoading(false));
   }, []);
 
   const checks = health?.system_checks;
@@ -112,14 +116,40 @@ export default function SettingsPage() {
               </span>
             </div>
 
-            <div className="py-3 flex items-center justify-between">
-              <div>
-                <span className="font-semibold text-slate-200 block">YouTube Data API v3 & OAuth</span>
-                <span className="text-slate-500 text-[11px]">Required for explicit approval publishing in Phase 8</span>
+            <div className="py-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="font-semibold text-slate-200 block">YouTube Data API v3 & OAuth 2.0</span>
+                  <span className="text-slate-500 text-[11px]">Enforces explicit human approval before any documentary is uploaded</span>
+                </div>
+                {ytStatus?.connected ? (
+                  <span className="text-[11px] font-semibold px-2.5 py-1 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1.5">
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    Channel: {ytStatus.channel_title}
+                  </span>
+                ) : ytStatus?.configured ? (
+                  <span className="text-[11px] font-semibold px-2.5 py-1 rounded-lg bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+                    OAuth Configured &bull; Ready to Connect
+                  </span>
+                ) : (
+                  <span className="text-[11px] font-semibold px-2.5 py-1 rounded-lg bg-slate-800 text-slate-400">
+                    Sandbox Ready &bull; Live OAuth Optional
+                  </span>
+                )}
               </div>
-              <span className="text-[11px] font-semibold px-2.5 py-1 rounded-lg bg-slate-800 text-slate-400">
-                Configured via backend/.env
-              </span>
+
+              {/* YouTube OAuth Configuration Instructions */}
+              <div className="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800/80 text-[11px] text-slate-400 space-y-1.5 font-sans">
+                <div className="font-semibold text-slate-300">Google Cloud Console Configuration:</div>
+                <p>
+                  To connect your real YouTube channel, create an OAuth 2.0 Client ID (Web Application) in Google Cloud Console with scope <code className="text-rose-400 font-mono">youtube.upload</code> and add your credentials to <code className="text-indigo-400 font-mono">backend/.env</code>:
+                </p>
+                <div className="font-mono text-[10px] text-slate-300 bg-slate-900 p-2 rounded-lg border border-slate-800 space-y-0.5">
+                  <div>YOUTUBE_CLIENT_ID="your-client-id.apps.googleusercontent.com"</div>
+                  <div>YOUTUBE_CLIENT_SECRET="your-client-secret"</div>
+                  <div>YOUTUBE_REDIRECT_URI="http://localhost:8000/api/v1/publishing/youtube/callback"</div>
+                </div>
+              </div>
             </div>
           </div>
         </div>

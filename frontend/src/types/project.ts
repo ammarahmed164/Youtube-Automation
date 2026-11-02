@@ -154,3 +154,46 @@ export interface ModificationResultData {
   quality_check?: QualityCheckData | null;
   message: string;
 }
+
+export interface UploadMetadataForm {
+  title: string;
+  description: string;
+  tags: string[];
+  category_id: string;
+  privacy_status: "private" | "unlisted" | "public";
+  notify_subscribers: boolean;
+}
+
+export interface VideoApprovalData {
+  id: string;
+  project_id: string;
+  video_version_id: string;
+  file_checksum: string;
+  upload_settings: UploadMetadataForm;
+  approved_at: string;
+  is_revoked: boolean;
+  revoked_at?: string | null;
+  revocation_reason?: string | null;
+}
+
+export interface YouTubeUploadData {
+  id: string;
+  project_id: string;
+  video_version_id: string;
+  approval_id: string;
+  youtube_video_id?: string | null;
+  youtube_url?: string | null;
+  status: "uploading" | "published" | "failed";
+  upload_metadata: Record<string, any>;
+  error_message?: string | null;
+  created_at: string;
+}
+
+export interface YouTubeAccountData {
+  connected: boolean;
+  configured: boolean;
+  id?: string | null;
+  channel_id?: string | null;
+  channel_title?: string | null;
+  message: string;
+}

@@ -219,3 +219,108 @@ export async function submitAiModification(
   }
   return res.json();
 }
+
+// Phase 8: Human Approval Gate & YouTube Publishing APIs
+export async function approveVideoVersion(
+  projectId: string,
+  payload: {
+    video_version_id: string;
+    confirmed_checksum: string;
+    upload_settings: any;
+    user_confirmation_statement?: string;
+  }
+): Promise<any> {
+  const res = await fetch(`${API_BASE_URL}/publishing/${projectId}/approve`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => null);
+    throw new Error(err?.detail || `Approval failed: HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function revokeVideoApproval(
+  projectId: string,
+  payload: {
+    video_version_id: string;
+    reason?: string;
+  }
+): Promise<any> {
+  const res = await fetch(`${API_BASE_URL}/publishing/${projectId}/revoke-approval`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => null);
+    throw new Error(err?.detail || `Revoke approval failed: HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function fetchVideoApproval(
+  projectId: string,
+  videoVersionId?: string
+): Promise<any> {
+  const vParam = videoVersionId ? `?video_version_id=${videoVersionId}` : "";
+  const res = await fetch(`${API_BASE_URL}/publishing/${projectId}/approval${vParam}`, {
+    cache: "no-store",
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`Failed to fetch approval status: HTTP ${res.status}`);
+  return res.json();
+}
+
+export async function publishToYouTube(
+  projectId: string,
+  payload: {
+    video_version_id: string;
+    approval_id: string;
+    expected_checksum: string;
+  },
+  forceSandbox: boolean = false
+): Promise<any> {
+  const res = await fetch(`${API_BASE_URL}/publishing/${projectId}/publish?force_sandbox=${forceSandbox}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => null);
+    throw new Error(err?.detail || `Publishing to YouTube failed: HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function fetchPublishStatus(
+  projectId: string,
+  videoVersionId?: string
+): Promise<any> {
+  const vParam = videoVersionId ? `?video_version_id=${videoVersionId}` : "";
+  const res = await fetch(`${API_BASE_URL}/publishing/${projectId}/publish-status${vParam}`, {
+    cache: "no-store",
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`Failed to fetch publish status: HTTP ${res.status}`);
+  return res.json();
+}
+
+export async function fetchYouTubeStatus(): Promise<any> {
+  const res = await fetch(`${API_BASE_URL}/publishing/youtube/status`, {
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error(`Failed to fetch YouTube status: HTTP ${res.status}`);
+  return res.json();
+}
+
+export async function fetchYouTubeAuthUrl(redirectUri?: string): Promise<any> {
+  const rParam = redirectUri ? `?redirect_uri=${encodeURIComponent(redirectUri)}` : "";
+  const res = await fetch(`${API_BASE_URL}/publishing/youtube/auth-url${rParam}`, {
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error(`Failed to fetch OAuth URL: HTTP ${res.status}`);
+  return res.json();
+}
