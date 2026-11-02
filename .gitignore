@@ -23,6 +23,9 @@ htmlcov/
 dist/
 build/
 *.egg-info/
+*.db
+*.sqlite
+*.sqlite3
 
 # Node & Next.js
 frontend/node_modules/
