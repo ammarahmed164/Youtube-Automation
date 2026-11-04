@@ -38,6 +38,7 @@ import {
   Unlock,
   ExternalLink,
   Shield,
+  RotateCcw,
 } from "lucide-react";
 import {
   fetchProjectById,
@@ -48,6 +49,8 @@ import {
   generateProjectVoice,
   generateProjectVisuals,
   uploadSceneAsset,
+  resetSceneVisual,
+  fetchSceneCuts,
   getSceneVisualUrl,
   getSceneAudioUrl,
   startVideoRender,
@@ -101,6 +104,9 @@ function WorkspaceContent() {
   const [generatingVisuals, setGeneratingVisuals] = useState(false);
   const [uploadingSceneId, setUploadingSceneId] = useState<string | null>(null);
   const [assetTimestamp, setAssetTimestamp] = useState<number>(Date.now());
+  const [selectedSceneSlots, setSelectedSceneSlots] = useState<Record<string, number>>({});
+  const [resettingSceneId, setResettingSceneId] = useState<string | null>(null);
+  const [sceneCuts, setSceneCuts] = useState<Record<string, any[]>>({});
 
   // Phase 6 Video Rendering states
   const [isRendering, setIsRendering] = useState(false);
@@ -222,6 +228,32 @@ function WorkspaceContent() {
     loadData();
   }, [projectId]);
 
+  // Load and refresh multi-cut gallery and custom media status for all scenes
+  useEffect(() => {
+    if (!script?.scenes || script.scenes.length === 0) return;
+    let isMounted = true;
+    async function loadCuts() {
+      const cutsMap: Record<string, any[]> = {};
+      await Promise.all(
+        script!.scenes.map(async (s) => {
+          try {
+            const res = await fetchSceneCuts(s.id);
+            if (res && res.cuts) {
+              cutsMap[s.id] = res.cuts;
+            }
+          } catch {
+            // Cut gallery not ready yet
+          }
+        })
+      );
+      if (isMounted) setSceneCuts(cutsMap);
+    }
+    loadCuts();
+    return () => {
+      isMounted = false;
+    };
+  }, [script?.scenes, assetTimestamp]);
+
   // Polling for background rendering job
   useEffect(() => {
     let interval: any = null;
@@ -323,18 +355,33 @@ function WorkspaceContent() {
     }
   };
 
-  const handleUploadAsset = async (sceneId: string, file: File) => {
+  const handleUploadAsset = async (sceneId: string, file: File, cutSlot: number = 0) => {
     setUploadingSceneId(sceneId);
     try {
-      await uploadSceneAsset(sceneId, file);
+      await uploadSceneAsset(sceneId, file, cutSlot);
       const sc = await fetchScript(projectId);
       if (sc) setScript(sc);
       setAssetTimestamp(Date.now());
-      alert("Custom visual asset uploaded successfully!");
+      alert(`Media "${file.name}" uploaded to cut #${cutSlot === 0 ? "Main" : cutSlot + 1} and normalized to 1080p Full HD successfully!`);
     } catch (err: any) {
       alert(err.message || "Failed to upload asset.");
     } finally {
       setUploadingSceneId(null);
+    }
+  };
+
+  const handleResetVisual = async (sceneId: string) => {
+    if (!confirm("Are you sure you want to revert to the AI Archival visual? This will replace any custom uploaded media for this scene.")) return;
+    setResettingSceneId(sceneId);
+    try {
+      await resetSceneVisual(sceneId);
+      const sc = await fetchScript(projectId);
+      if (sc) setScript(sc);
+      setAssetTimestamp(Date.now());
+    } catch (err: any) {
+      alert(err.message || "Failed to reset scene visual.");
+    } finally {
+      setResettingSceneId(null);
     }
   };
 
@@ -847,61 +894,171 @@ function WorkspaceContent() {
 
                         {/* Visual & Narration 2-Column Grid */}
                         <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
-                          {/* Left Column: Visual Preview (5 cols) */}
-                          <div className="md:col-span-5 space-y-2">
-                            <div className="relative aspect-video rounded-xl overflow-hidden border border-slate-800 bg-slate-900 group">
-                              <img
-                                src={`${getSceneVisualUrl(scene.id)}?t=${assetTimestamp}`}
-                                alt={scene.scene_title || "Visual Preview"}
-                                loading="lazy"
-                                className="w-full h-full object-cover transition-transform group-hover:scale-105 duration-300"
-                                onError={(e) => {
-                                  (e.target as HTMLImageElement).src =
-                                    "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='100%' height='100%' viewBox='0 0 1920 1080'><rect fill='%230f172a' width='100%' height='100%'/><text fill='%2364748b' x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' font-family='sans-serif' font-size='48'>Visual Pending</text></svg>";
-                                }}
-                              />
+                          {/* Left Column: Multi-Cut Visual Studio (5 cols) */}
+                          <div className="md:col-span-5 space-y-2.5">
+                            {(() => {
+                              const cuts = sceneCuts[scene.id] || [
+                                {
+                                  slot: 0,
+                                  label: "Main Cut (01)",
+                                  asset_type: asset?.file_path?.endsWith(".mp4") ? "video" : "image",
+                                  is_user_upload: asset?.source_provider === "user_upload",
+                                  source_provider: asset?.source_provider || "AI Visual",
+                                  url: getSceneVisualUrl(scene.id, 0),
+                                },
+                              ];
+                              const activeSlot = selectedSceneSlots[scene.id] ?? 0;
+                              const activeCut = cuts.find((c) => c.slot === activeSlot) || cuts[0];
+                              const isUserCut = !!activeCut?.is_user_upload;
+                              const hasAnyUserCut = cuts.some((c) => c.is_user_upload);
 
-                              {/* Source badge on top-left of image */}
-                              <div className="absolute top-2 left-2 flex items-center gap-1.5">
-                                <span className="px-2 py-0.5 rounded-md bg-slate-950/80 backdrop-blur-md text-[10px] font-semibold text-slate-200 border border-slate-800">
-                                  {asset?.source_provider
-                                    ? asset.source_provider.replace(/_/g, " ").toUpperCase()
-                                    : "VISUAL"}
-                                </span>
-                              </div>
+                              return (
+                                <>
+                                  {/* Multi-Cut Selector Pills */}
+                                  <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+                                    {cuts.map((c) => {
+                                      const isSelected = c.slot === activeSlot;
+                                      return (
+                                        <button
+                                          key={c.slot}
+                                          type="button"
+                                          onClick={() =>
+                                            setSelectedSceneSlots((prev) => ({
+                                              ...prev,
+                                              [scene.id]: c.slot,
+                                            }))
+                                          }
+                                          className={`px-2.5 py-1 rounded-lg text-[10px] font-bold flex items-center gap-1.5 transition-all whitespace-nowrap border ${
+                                            isSelected
+                                              ? c.is_user_upload
+                                                ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/50 shadow-sm shadow-emerald-950"
+                                                : "bg-indigo-600 text-white border-indigo-500 shadow-sm shadow-indigo-950"
+                                              : "bg-slate-900/80 text-slate-400 hover:text-slate-200 border-slate-800 hover:border-slate-700"
+                                          }`}
+                                        >
+                                          {c.is_user_upload ? (
+                                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                                          ) : (
+                                            <span className="w-1.5 h-1.5 rounded-full bg-indigo-400"></span>
+                                          )}
+                                          <span>{c.label}</span>
+                                          {c.asset_type === "video" && (
+                                            <span className="text-[9px] px-1 py-0.2 rounded bg-black/40 text-amber-300 uppercase">
+                                              VID
+                                            </span>
+                                          )}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
 
-                              {/* Upload Custom File Overlay on hover */}
-                              <label
-                                className="absolute inset-0 bg-slate-950/70 backdrop-blur-[2px] opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-1.5 cursor-pointer text-white"
-                              >
-                                <UploadCloud className="w-6 h-6 text-indigo-400" />
-                                <span className="text-xs font-semibold">
-                                  {uploadingSceneId === scene.id ? "Uploading..." : "Replace Visual Asset"}
-                                </span>
-                                <span className="text-[10px] text-slate-400">JPG, PNG, WebP, MP4</span>
-                                <input
-                                  type="file"
-                                  accept="image/jpeg,image/png,image/webp,video/mp4"
-                                  className="hidden"
-                                  disabled={uploadingSceneId === scene.id}
-                                  onChange={(e) => {
-                                    if (e.target.files && e.target.files[0]) {
-                                      handleUploadAsset(scene.id, e.target.files[0]);
-                                    }
-                                  }}
-                                />
-                              </label>
-                            </div>
+                                  {/* Visual Preview Frame */}
+                                  <div className="relative aspect-video rounded-xl overflow-hidden border border-slate-800 bg-slate-900 group shadow-inner">
+                                    {activeCut?.asset_type === "video" ? (
+                                      <video
+                                        key={`${scene.id}-${activeSlot}-${assetTimestamp}`}
+                                        src={`${getSceneVisualUrl(scene.id, activeSlot)}&t=${assetTimestamp}`}
+                                        controls
+                                        playsInline
+                                        preload="metadata"
+                                        className="w-full h-full object-cover"
+                                      />
+                                    ) : (
+                                      <img
+                                        key={`${scene.id}-${activeSlot}-${assetTimestamp}`}
+                                        src={`${getSceneVisualUrl(scene.id, activeSlot)}&t=${assetTimestamp}`}
+                                        alt={activeCut?.label || "Visual Preview"}
+                                        loading="lazy"
+                                        className="w-full h-full object-cover transition-transform group-hover:scale-105 duration-300"
+                                        onError={(e) => {
+                                          (e.target as HTMLImageElement).src =
+                                            "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='100%' height='100%' viewBox='0 0 1920 1080'><rect fill='%230f172a' width='100%' height='100%'/><text fill='%2364748b' x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' font-family='sans-serif' font-size='48'>Visual Pending</text></svg>";
+                                        }}
+                                      />
+                                    )}
 
-                            {/* Attribution & License */}
-                            {asset && (
-                              <div className="text-[10px] text-slate-500 truncate flex items-center justify-between">
-                                <span title={asset.attribution || ""}>
-                                  Source: {asset.attribution || "Public Domain"}
-                                </span>
-                                <span>{asset.license_notes || ""}</span>
-                              </div>
-                            )}
+                                    {/* Source Badge (Top Left) */}
+                                    <div className="absolute top-2 left-2 z-10 flex items-center gap-1.5 pointer-events-none">
+                                      {isUserCut ? (
+                                        <div className="px-2 py-0.5 rounded-md bg-emerald-950/90 backdrop-blur-md text-[10px] font-bold text-emerald-300 border border-emerald-500/40 shadow-lg flex items-center gap-1">
+                                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                                          <span>USER {activeCut?.asset_type?.toUpperCase()}</span>
+                                        </div>
+                                      ) : (
+                                        <div className="px-2 py-0.5 rounded-md bg-purple-950/90 backdrop-blur-md text-[10px] font-bold text-purple-300 border border-purple-500/40 shadow-lg flex items-center gap-1">
+                                          <Sparkles className="w-2.5 h-2.5 text-purple-400" />
+                                          <span>
+                                            AI &bull;{" "}
+                                            {activeCut?.source_provider
+                                              ? activeCut.source_provider.replace(/_/g, " ").toUpperCase()
+                                              : "ARCHIVAL"}
+                                          </span>
+                                        </div>
+                                      )}
+                                    </div>
+
+                                    {/* Slot Number Badge (Top Right) */}
+                                    <div className="absolute top-2 right-2 z-10 pointer-events-none">
+                                      <span className="px-2 py-0.5 rounded-md bg-slate-950/80 backdrop-blur-md text-[9px] font-mono text-slate-400 border border-slate-800">
+                                        Slot {activeSlot + 1}/{cuts.length}
+                                      </span>
+                                    </div>
+                                  </div>
+
+                                  {/* Media Management Action Buttons */}
+                                  <div className="flex items-center gap-2 pt-0.5">
+                                    <label className="flex-1 flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-xl bg-slate-900 hover:bg-slate-850 border border-slate-700/80 hover:border-indigo-500 text-slate-200 hover:text-white transition-all text-xs font-semibold cursor-pointer shadow-sm group/btn">
+                                      <UploadCloud className="w-3.5 h-3.5 text-indigo-400 group-hover/btn:scale-110 transition-transform" />
+                                      <span>
+                                        {uploadingSceneId === scene.id
+                                          ? "Uploading..."
+                                          : `Upload Media (${activeCut?.label || "Cut"})`}
+                                      </span>
+                                      <input
+                                        type="file"
+                                        accept="image/*,video/mp4,video/quicktime,video/webm,video/x-matroska,image/gif"
+                                        className="hidden"
+                                        disabled={uploadingSceneId === scene.id}
+                                        onChange={(e) => {
+                                          if (e.target.files && e.target.files[0]) {
+                                            handleUploadAsset(scene.id, e.target.files[0], activeSlot);
+                                          }
+                                        }}
+                                      />
+                                    </label>
+
+                                    {hasAnyUserCut && (
+                                      <button
+                                        type="button"
+                                        title="Revert all custom uploads for this scene and restore AI historical visual"
+                                        onClick={() => handleResetVisual(scene.id)}
+                                        disabled={resettingSceneId === scene.id}
+                                        className="flex items-center gap-1.5 py-1.5 px-2.5 rounded-xl bg-slate-900 hover:bg-rose-950/40 border border-slate-800 hover:border-rose-700/60 text-slate-400 hover:text-rose-300 transition-all text-xs font-medium disabled:opacity-50"
+                                      >
+                                        <RotateCcw
+                                          className={`w-3.5 h-3.5 ${
+                                            resettingSceneId === scene.id ? "animate-spin text-rose-400" : ""
+                                          }`}
+                                        />
+                                        <span className="hidden sm:inline">Reset to AI</span>
+                                      </button>
+                                    )}
+                                  </div>
+
+                                  {/* Attribution & Metadata */}
+                                  <div className="text-[10px] text-slate-500 flex items-center justify-between px-0.5">
+                                    <span className="truncate">
+                                      {isUserCut
+                                        ? "Creator Custom Media (Broadcast 1080p Normalized)"
+                                        : `Source: ${activeCut?.source_provider?.replace(/_/g, " ") || "Public Domain"}`}
+                                    </span>
+                                    <span className="text-[9px] text-slate-600 font-mono">
+                                      {activeCut?.asset_type === "video" ? "MP4 Video" : "1080p Image"}
+                                    </span>
+                                  </div>
+                                </>
+                              );
+                            })()}
                           </div>
 
                           {/* Right Column: Narration & Audio Player (7 cols) */}

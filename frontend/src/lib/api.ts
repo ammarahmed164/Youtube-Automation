@@ -121,15 +121,16 @@ export async function generateProjectVisuals(projectId: string, forceRegenerate:
   return res.json();
 }
 
-export function getSceneVisualUrl(sceneId: string): string {
-  return `${API_BASE_URL}/projects/scenes/${sceneId}/visual`;
+export function getSceneVisualUrl(sceneId: string, slot?: number): string {
+  const slotParam = slot !== undefined ? `?slot=${slot}` : "";
+  return `${API_BASE_URL}/projects/scenes/${sceneId}/visual${slotParam}`;
 }
 
-export async function uploadSceneAsset(sceneId: string, file: File): Promise<any> {
+export async function uploadSceneAsset(sceneId: string, file: File, cutSlot: number = 0): Promise<any> {
   const formData = new FormData();
   formData.append("file", file);
 
-  const res = await fetch(`${API_BASE_URL}/projects/scenes/${sceneId}/upload-asset`, {
+  const res = await fetch(`${API_BASE_URL}/projects/scenes/${sceneId}/upload-asset?cut_slot=${cutSlot}`, {
     method: "POST",
     body: formData,
   });
@@ -137,6 +138,40 @@ export async function uploadSceneAsset(sceneId: string, file: File): Promise<any
   if (!res.ok) {
     const err = await res.json().catch(() => null);
     throw new Error(err?.detail || `Upload asset failed: HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function resetSceneVisual(sceneId: string): Promise<any> {
+  const res = await fetch(`${API_BASE_URL}/projects/scenes/${sceneId}/reset-visual`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => null);
+    throw new Error(err?.detail || `Reset visual failed: HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function fetchSceneCuts(sceneId: string): Promise<{
+  scene_id: string;
+  scene_order: number;
+  scene_title?: string;
+  total_cuts: number;
+  cuts: Array<{
+    slot: number;
+    label: string;
+    asset_type: "image" | "video";
+    is_user_upload: boolean;
+    source_provider: string;
+    url: string;
+  }>;
+}> {
+  const res = await fetch(`${API_BASE_URL}/projects/scenes/${sceneId}/cuts`, {
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch scene cuts: HTTP ${res.status}`);
   }
   return res.json();
 }

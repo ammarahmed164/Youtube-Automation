@@ -3,6 +3,7 @@ import os
 import json
 import uuid
 import logging
+import subprocess
 import urllib.request
 import urllib.parse
 from pathlib import Path
@@ -527,11 +528,14 @@ class VisualService(BaseVisualService):
         db: Session,
         scene_id: str,
         file_bytes: bytes,
-        original_filename: str
+        original_filename: str,
+        cut_slot: int = 0
     ) -> Dict[str, Any]:
         """
-        Saves a custom user-uploaded asset for a scene.
-        If image, auto-resizes to 1920x1080 (16:9).
+        Saves and auto-formats user-uploaded custom media for a scene:
+        - Photos (.jpg, .png, .webp, .bmp, .tiff) -> Normalized to 1920x1080 Full HD JPEG.
+        - Videos (.mp4, .mov, .webm, .mkv, .avi) & Animations (.gif) -> Transcoded to 1920x1080 H.264 MP4.
+        - cut_slot: 0 for primary cut, 1/2/3 for B-roll multi-cuts.
         """
         scene = db.query(Scene).filter(Scene.id == scene_id).first()
         if not scene:
@@ -542,69 +546,261 @@ class VisualService(BaseVisualService):
         visuals_dir.mkdir(parents=True, exist_ok=True)
 
         ext = Path(original_filename).suffix.lower()
-        if ext not in [".jpg", ".jpeg", ".png", ".webp", ".mp4"]:
-            raise ValueError("Unsupported format. Allowed: .jpg, .jpeg, .png, .webp, .mp4")
+        allowed_img = [".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff"]
+        allowed_vid = [".mp4", ".mov", ".webm", ".mkv", ".avi", ".gif"]
 
-        is_video = ext == ".mp4"
-        target_filename = f"{scene.scene_id_str}_upload{ext}"
-        target_path = visuals_dir / target_filename
-        rel_path = f"workspace_data/projects/{project_id}/visuals/{target_filename}"
+        if ext not in allowed_img and ext not in allowed_vid:
+            raise ValueError(f"Unsupported format '{ext}'. Allowed: Images (JPG, PNG, WebP) and Videos/Animations (MP4, MOV, WEBM, GIF).")
 
-        if is_video:
-            with open(target_path, "wb") as f:
-                f.write(file_bytes)
-            asset_type = "stock_video"
+        is_video_or_anim = ext in allowed_vid
+        ffmpeg_bin = settings.get_ffmpeg_path()
+
+        if cut_slot == 0:
+            # Primary Visual Slot
+            if is_video_or_anim:
+                target_filename = f"{scene.scene_id_str}_upload.mp4"
+                target_path = visuals_dir / target_filename
+                rel_path = f"workspace_data/projects/{project_id}/visuals/{target_filename}"
+                asset_type = "stock_video"
+
+                # Temp file to transcode into 1080p MP4
+                temp_in = visuals_dir / f"temp_{uuid.uuid4().hex[:8]}{ext}"
+                with open(temp_in, "wb") as f:
+                    f.write(file_bytes)
+
+                try:
+                    vf = "scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,setsar=1"
+                    cmd = [
+                        ffmpeg_bin, "-y",
+                        "-i", str(temp_in),
+                        "-vf", vf,
+                        "-c:v", "libx264", "-preset", "fast", "-crf", "22",
+                        "-pix_fmt", "yuv420p",
+                        str(target_path)
+                    ]
+                    subprocess.run(cmd, capture_output=True, check=True)
+                finally:
+                    temp_in.unlink(missing_ok=True)
+            else:
+                target_filename = f"{scene.scene_id_str}.jpg"
+                target_path = visuals_dir / target_filename
+                rel_path = f"workspace_data/projects/{project_id}/visuals/{target_filename}"
+                asset_type = "image"
+
+                img = Image.open(io.BytesIO(file_bytes)).convert("RGB")
+                target_w, target_h = 1920, 1080
+                w, h = img.size
+                scale = max(target_w / w, target_h / h)
+                new_w, new_h = int(w * scale), int(h * scale)
+                resized = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                left = (new_w - target_w) // 2
+                top = (new_h - target_h) // 2
+                cropped = resized.crop((left, top, left + target_w, top + target_h))
+                cropped.save(target_path, "JPEG", quality=94, optimize=True)
+
+            # Update primary SceneAsset record in Supabase
+            existing_asset = db.query(SceneAsset).filter(SceneAsset.scene_id == scene.id).first()
+            duration = scene.actual_audio_duration_seconds or scene.estimated_duration_seconds or 5.0
+
+            if existing_asset:
+                existing_asset.asset_type = asset_type
+                existing_asset.source_provider = "user_upload"
+                existing_asset.source_url = f"upload://{original_filename}"
+                existing_asset.file_path = rel_path
+                existing_asset.attribution = f"User Custom {asset_type.capitalize()}"
+                existing_asset.license_notes = "User Owned / Uploaded"
+                existing_asset.duration_seconds = duration
+            else:
+                new_asset = SceneAsset(
+                    id=str(uuid.uuid4()),
+                    scene_id=scene.id,
+                    asset_type=asset_type,
+                    source_provider="user_upload",
+                    source_url=f"upload://{original_filename}",
+                    file_path=rel_path,
+                    attribution=f"User Custom {asset_type.capitalize()}",
+                    license_notes="User Owned / Uploaded",
+                    duration_seconds=duration
+                )
+                db.add(new_asset)
+
         else:
-            # Process image to 1920x1080
-            img = Image.open(io.BytesIO(file_bytes)).convert("RGB")
-            target_w, target_h = 1920, 1080
-            w, h = img.size
-            scale = max(target_w / w, target_h / h)
-            new_w, new_h = int(w * scale), int(h * scale)
-            resized = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
-            left = (new_w - target_w) // 2
-            top = (new_h - target_h) // 2
-            cropped = resized.crop((left, top, left + target_w, top + target_h))
-            
-            target_path = visuals_dir / f"{scene.scene_id_str}.jpg"
-            rel_path = f"workspace_data/projects/{project_id}/visuals/{scene.scene_id_str}.jpg"
-            cropped.save(target_path, "JPEG", quality=92, optimize=True)
-            asset_type = "image"
+            # Secondary B-Roll Slot (Cut 1, 2, 3...)
+            b_suffix = f"b{cut_slot:02d}"
+            if is_video_or_anim:
+                target_filename = f"{scene.scene_id_str}_{b_suffix}.mp4"
+                target_path = visuals_dir / target_filename
+                rel_path = f"workspace_data/projects/{project_id}/visuals/{target_filename}"
+                asset_type = "stock_video"
 
-        # Update Supabase
-        existing_asset = db.query(SceneAsset).filter(SceneAsset.scene_id == scene.id).first()
-        duration = scene.actual_audio_duration_seconds or scene.estimated_duration_seconds or 5.0
+                temp_in = visuals_dir / f"temp_{uuid.uuid4().hex[:8]}{ext}"
+                with open(temp_in, "wb") as f:
+                    f.write(file_bytes)
 
-        if existing_asset:
-            existing_asset.asset_type = asset_type
-            existing_asset.source_provider = "user_upload"
-            existing_asset.source_url = f"upload://{original_filename}"
-            existing_asset.file_path = rel_path
-            existing_asset.attribution = "User Custom Upload"
-            existing_asset.license_notes = "User Owned / Uploaded"
-            existing_asset.duration_seconds = duration
-        else:
-            new_asset = SceneAsset(
-                id=str(uuid.uuid4()),
-                scene_id=scene.id,
-                asset_type=asset_type,
-                source_provider="user_upload",
-                source_url=f"upload://{original_filename}",
-                file_path=rel_path,
-                attribution="User Custom Upload",
-                license_notes="User Owned / Uploaded",
-                duration_seconds=duration
-            )
-            db.add(new_asset)
+                try:
+                    vf = "scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,setsar=1"
+                    cmd = [
+                        ffmpeg_bin, "-y",
+                        "-i", str(temp_in),
+                        "-vf", vf,
+                        "-c:v", "libx264", "-preset", "fast", "-crf", "22",
+                        "-pix_fmt", "yuv420p",
+                        str(target_path)
+                    ]
+                    subprocess.run(cmd, capture_output=True, check=True)
+                finally:
+                    temp_in.unlink(missing_ok=True)
+            else:
+                target_filename = f"{scene.scene_id_str}_{b_suffix}.jpg"
+                target_path = visuals_dir / target_filename
+                rel_path = f"workspace_data/projects/{project_id}/visuals/{target_filename}"
+                asset_type = "image"
+
+                img = Image.open(io.BytesIO(file_bytes)).convert("RGB")
+                target_w, target_h = 1920, 1080
+                w, h = img.size
+                scale = max(target_w / w, target_h / h)
+                new_w, new_h = int(w * scale), int(h * scale)
+                resized = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                left = (new_w - target_w) // 2
+                top = (new_h - target_h) // 2
+                cropped = resized.crop((left, top, left + target_w, top + target_h))
+                cropped.save(target_path, "JPEG", quality=94, optimize=True)
 
         db.commit()
 
         return {
             "scene_id": scene.id,
+            "cut_slot": cut_slot,
             "file_path": rel_path,
             "asset_type": asset_type,
             "source_provider": "user_upload",
             "attribution": "User Custom Upload",
             "filename": original_filename
+        }
+
+    @classmethod
+    def reset_scene_visual(cls, db: Session, scene_id: str) -> Dict[str, Any]:
+        """
+        Resets a scene's visual back to pristine AI/archival generation,
+        removing any custom user uploads.
+        """
+        scene = db.query(Scene).filter(Scene.id == scene_id).first()
+        if not scene:
+            raise ValueError(f"Scene '{scene_id}' not found.")
+
+        project_id = scene.project_id
+        project_dir = BASE_DIR / "workspace_data" / "projects" / project_id
+        visuals_dir = project_dir / "visuals"
+
+        # Remove custom uploads if present
+        custom_upload_video = visuals_dir / f"{scene.scene_id_str}_upload.mp4"
+        if custom_upload_video.exists():
+            try:
+                custom_upload_video.unlink()
+            except Exception:
+                pass
+
+        # Force regenerate AI visual
+        visual_info = cls.generate_scene_visual(scene=scene, project_dir=project_dir, force_regenerate=True)
+
+        existing_asset = db.query(SceneAsset).filter(SceneAsset.scene_id == scene.id).first()
+        duration = scene.actual_audio_duration_seconds or scene.estimated_duration_seconds or 5.0
+
+        if existing_asset:
+            existing_asset.asset_type = visual_info["asset_type"]
+            existing_asset.source_provider = visual_info["source_provider"]
+            existing_asset.source_url = visual_info.get("source_url")
+            existing_asset.file_path = visual_info["file_path"]
+            existing_asset.attribution = visual_info["attribution"]
+            existing_asset.license_notes = visual_info["license_notes"]
+            existing_asset.duration_seconds = duration
+        else:
+            new_asset = SceneAsset(
+                id=str(uuid.uuid4()),
+                scene_id=scene.id,
+                asset_type=visual_info["asset_type"],
+                source_provider=visual_info["source_provider"],
+                source_url=visual_info.get("source_url"),
+                file_path=visual_info["file_path"],
+                attribution=visual_info["attribution"],
+                license_notes=visual_info["license_notes"],
+                duration_seconds=duration
+            )
+            db.add(new_asset)
+
+        db.commit()
+        return visual_info
+
+    @classmethod
+    def get_scene_visuals_gallery(cls, db: Session, scene_id: str) -> Dict[str, Any]:
+        """
+        Lists all visual cuts (primary + B-rolls) for a scene with their source badges.
+        """
+        scene = db.query(Scene).filter(Scene.id == scene_id).first()
+        if not scene:
+            raise ValueError(f"Scene '{scene_id}' not found.")
+
+        project_id = scene.project_id
+        visuals_dir = BASE_DIR / "workspace_data" / "projects" / project_id / "visuals"
+
+        cuts = []
+
+        # Check primary cut (Slot 0)
+        vid_p = visuals_dir / f"{scene.scene_id_str}_upload.mp4"
+        img_p = visuals_dir / f"{scene.scene_id_str}.jpg"
+
+        asset = db.query(SceneAsset).filter(SceneAsset.scene_id == scene.id).first()
+        is_user = asset.source_provider == "user_upload" if asset else False
+
+        if vid_p.exists():
+            cuts.append({
+                "slot": 0,
+                "label": "Main Cut (01)",
+                "asset_type": "video",
+                "is_user_upload": True,
+                "source_provider": "User Custom Video",
+                "url": f"/api/v1/projects/scenes/{scene.id}/visual?slot=0"
+            })
+        elif img_p.exists():
+            cuts.append({
+                "slot": 0,
+                "label": "Main Cut (01)",
+                "asset_type": "image",
+                "is_user_upload": is_user,
+                "source_provider": asset.source_provider if asset else "AI Stock",
+                "url": f"/api/v1/projects/scenes/{scene.id}/visual?slot=0"
+            })
+
+        # Check B-roll cuts (Slots 1, 2, 3...)
+        for slot in range(1, 5):
+            b_vid = visuals_dir / f"{scene.scene_id_str}_b{slot:02d}.mp4"
+            b_img = visuals_dir / f"{scene.scene_id_str}_b{slot:02d}.jpg"
+
+            if b_vid.exists():
+                cuts.append({
+                    "slot": slot,
+                    "label": f"B-Roll Cut {slot+1:02d}",
+                    "asset_type": "video",
+                    "is_user_upload": True,
+                    "source_provider": "User Custom Video Cut",
+                    "url": f"/api/v1/projects/scenes/{scene.id}/visual?slot={slot}"
+                })
+            elif b_img.exists():
+                cuts.append({
+                    "slot": slot,
+                    "label": f"B-Roll Cut {slot+1:02d}",
+                    "asset_type": "image",
+                    "is_user_upload": False,
+                    "source_provider": "AI Historical B-Roll",
+                    "url": f"/api/v1/projects/scenes/{scene.id}/visual?slot={slot}"
+                })
+
+        return {
+            "scene_id": scene.id,
+            "scene_order": scene.scene_order,
+            "scene_title": scene.scene_title,
+            "total_cuts": len(cuts),
+            "cuts": cuts
         }
 

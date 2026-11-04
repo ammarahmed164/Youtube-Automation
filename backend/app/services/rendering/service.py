@@ -175,10 +175,13 @@ class RenderingService(BaseRenderingService):
                 raise RuntimeError(f"FFmpeg failed rendering video scene {scene.scene_id_str}: {res.stderr[-300:]}")
             return
 
-        # Multi-cut Image Asset Engine
+        # Multi-cut Image and Video Asset Engine
         visuals_dir = visual_path.parent
         cuts = [visual_path]
-        b_roll_candidates = sorted(visuals_dir.glob(f"{scene.scene_id_str}_b*.jpg"))
+        b_roll_candidates = sorted(
+            list(visuals_dir.glob(f"{scene.scene_id_str}_b*.jpg")) +
+            list(visuals_dir.glob(f"{scene.scene_id_str}_b*.mp4"))
+        )
         for b in b_roll_candidates:
             if b.exists() and b.stat().st_size > 5000:
                 cuts.append(b)
@@ -200,17 +203,32 @@ class RenderingService(BaseRenderingService):
 
             for idx, img_p in enumerate(cuts):
                 sub_out = sub_dir / f"cut_{idx+1}.mp4"
-                vf = cls.get_cinematic_motion_filter(scene_seed + idx, cut_frames, fps)
-                sub_cmd = [
-                    ffmpeg_bin, "-y",
-                    "-loop", "1", "-i", str(img_p),
-                    "-vf", vf,
-                    "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-                    "-maxrate", "3500k", "-bufsize", "6000k",
-                    "-pix_fmt", "yuv420p",
-                    "-t", f"{cut_duration:.3f}",
-                    str(sub_out)
-                ]
+
+                if str(img_p).lower().endswith(".mp4"):
+                    # Video or Animated Asset Cut
+                    sub_cmd = [
+                        ffmpeg_bin, "-y",
+                        "-stream_loop", "-1", "-i", str(img_p),
+                        "-vf", "scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,setsar=1",
+                        "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                        "-maxrate", "3500k", "-bufsize", "6000k",
+                        "-pix_fmt", "yuv420p",
+                        "-t", f"{cut_duration:.3f}",
+                        str(sub_out)
+                    ]
+                else:
+                    # Photographic Visual Cut with 4K Sub-Pixel Smooth Ken Burns
+                    vf = cls.get_cinematic_motion_filter(scene_seed + idx, cut_frames, fps)
+                    sub_cmd = [
+                        ffmpeg_bin, "-y",
+                        "-loop", "1", "-i", str(img_p),
+                        "-vf", vf,
+                        "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                        "-maxrate", "3500k", "-bufsize", "6000k",
+                        "-pix_fmt", "yuv420p",
+                        "-t", f"{cut_duration:.3f}",
+                        str(sub_out)
+                    ]
                 r_sub = subprocess.run(sub_cmd, capture_output=True, text=True)
                 if r_sub.returncode != 0:
                     logger.warning(f"Sub-cut {idx+1} failed, falling back: {r_sub.stderr[-200:]}")
