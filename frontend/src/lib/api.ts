@@ -176,6 +176,50 @@ export async function fetchSceneCuts(sceneId: string): Promise<{
   return res.json();
 }
 
+export async function deleteSceneCut(sceneId: string, slot: number): Promise<any> {
+  const res = await fetch(`${API_BASE_URL}/projects/scenes/${sceneId}/cuts/${slot}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => null);
+    throw new Error(err?.detail || `Failed to delete cut: HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function updateScene(sceneId: string, updateIn: {
+  scene_title?: string;
+  purpose?: string;
+  narration_text?: string;
+  visual_description?: string;
+  preferred_visual_type?: string;
+  stock_keywords?: string[];
+  on_screen_text?: string;
+  transition_preference?: string;
+}): Promise<any> {
+  const res = await fetch(`${API_BASE_URL}/projects/scenes/${sceneId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(updateIn),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => null);
+    throw new Error(err?.detail || `Failed to update scene: HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function deleteScene(sceneId: string): Promise<ScriptRevisionData> {
+  const res = await fetch(`${API_BASE_URL}/projects/scenes/${sceneId}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => null);
+    throw new Error(err?.detail || `Failed to delete scene: HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
 // Phase 6: Video Rendering Engine APIs
 export async function startVideoRender(projectId: string): Promise<any> {
   const res = await fetch(`${API_BASE_URL}/projects/${projectId}/render`, {

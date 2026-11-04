@@ -39,6 +39,9 @@ import {
   ExternalLink,
   Shield,
   RotateCcw,
+  Plus,
+  X,
+  Save,
 } from "lucide-react";
 import {
   fetchProjectById,
@@ -46,11 +49,14 @@ import {
   generateScript,
   fetchScript,
   updateScript,
+  updateScene,
+  deleteScene,
   generateProjectVoice,
   generateProjectVisuals,
   uploadSceneAsset,
   resetSceneVisual,
   fetchSceneCuts,
+  deleteSceneCut,
   getSceneVisualUrl,
   getSceneAudioUrl,
   startVideoRender,
@@ -107,6 +113,23 @@ function WorkspaceContent() {
   const [selectedSceneSlots, setSelectedSceneSlots] = useState<Record<string, number>>({});
   const [resettingSceneId, setResettingSceneId] = useState<string | null>(null);
   const [sceneCuts, setSceneCuts] = useState<Record<string, any[]>>({});
+  const [editingSceneId, setEditingSceneId] = useState<string | null>(null);
+  const [sceneEditForm, setSceneEditForm] = useState<{
+    scene_title: string;
+    narration_text: string;
+    visual_description: string;
+    preferred_visual_type: string;
+    transition_preference: string;
+  }>({
+    scene_title: "",
+    narration_text: "",
+    visual_description: "",
+    preferred_visual_type: "stock_footage",
+    transition_preference: "fade",
+  });
+  const [savingScene, setSavingScene] = useState(false);
+  const [deletingSceneId, setDeletingSceneId] = useState<string | null>(null);
+  const [videoPlayerError, setVideoPlayerError] = useState<string | null>(null);
 
   // Phase 6 Video Rendering states
   const [isRendering, setIsRendering] = useState(false);
@@ -382,6 +405,60 @@ function WorkspaceContent() {
       alert(err.message || "Failed to reset scene visual.");
     } finally {
       setResettingSceneId(null);
+    }
+  };
+
+  const handleStartEditScene = (scene: any) => {
+    setEditingSceneId(scene.id);
+    setSceneEditForm({
+      scene_title: scene.scene_title || "",
+      narration_text: scene.narration_text || "",
+      visual_description: scene.visual_description || "",
+      preferred_visual_type: scene.preferred_visual_type || "stock_footage",
+      transition_preference: scene.transition_preference || "fade",
+    });
+  };
+
+  const handleSaveScene = async (sceneId: string) => {
+    setSavingScene(true);
+    try {
+      await updateScene(sceneId, sceneEditForm);
+      const sc = await fetchScript(projectId);
+      if (sc) setScript(sc);
+      setEditingSceneId(null);
+    } catch (err: any) {
+      alert(err.message || "Failed to update scene.");
+    } finally {
+      setSavingScene(false);
+    }
+  };
+
+  const handleDeleteScene = async (sceneId: string, sceneOrder: number) => {
+    if (!confirm(`Are you sure you want to delete Scene #${sceneOrder}? The remaining scenes will be sequentially reordered.`)) {
+      return;
+    }
+    setDeletingSceneId(sceneId);
+    try {
+      const updatedScript = await deleteScene(sceneId);
+      if (updatedScript) setScript(updatedScript);
+      const proj = await fetchProjectById(projectId);
+      if (proj) setProject(proj);
+      setAssetTimestamp(Date.now());
+    } catch (err: any) {
+      alert(err.message || "Failed to delete scene.");
+    } finally {
+      setDeletingSceneId(null);
+    }
+  };
+
+  const handleDeleteCut = async (sceneId: string, slot: number) => {
+    if (!confirm(`Remove Cut #${slot + 1}?`)) return;
+    try {
+      await deleteSceneCut(sceneId, slot);
+      setSelectedSceneSlots((prev) => ({ ...prev, [sceneId]: 0 }));
+      setAssetTimestamp(Date.now());
+    } catch (err: any) {
+      alert(err.message || "Failed to remove cut.");
     }
   };
 
@@ -877,20 +954,165 @@ function WorkspaceContent() {
                             <h4 className="font-bold text-sm text-white">{scene.scene_title || scene.scene_id_str}</h4>
                           </div>
 
-                          <div className="flex items-center gap-2 text-[11px]">
-                            <span className="px-2 py-0.5 rounded-md bg-slate-900 border border-slate-800 text-emerald-400 font-medium">
-                              {hasAudio
-                                ? `${Math.round(scene.actual_audio_duration_seconds!)}s (actual)`
-                                : `~${scene.estimated_duration_seconds ? Math.round(scene.estimated_duration_seconds) : 30}s`}
-                            </span>
-                            <span className="px-2 py-0.5 rounded-md bg-slate-900 border border-slate-800 text-slate-300 capitalize">
-                              {scene.preferred_visual_type.replace(/_/g, " ")}
-                            </span>
-                            <span className="px-2 py-0.5 rounded-md bg-slate-900 border border-slate-800 text-slate-400">
-                              {scene.transition_preference}
-                            </span>
+                          <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2 text-[11px]">
+                              <span className="px-2 py-0.5 rounded-md bg-slate-900 border border-slate-800 text-emerald-400 font-medium">
+                                {hasAudio
+                                  ? `${Math.round(scene.actual_audio_duration_seconds!)}s (actual)`
+                                  : `~${scene.estimated_duration_seconds ? Math.round(scene.estimated_duration_seconds) : 30}s`}
+                              </span>
+                              <span className="px-2 py-0.5 rounded-md bg-slate-900 border border-slate-800 text-slate-300 capitalize">
+                                {scene.preferred_visual_type.replace(/_/g, " ")}
+                              </span>
+                              <span className="px-2 py-0.5 rounded-md bg-slate-900 border border-slate-800 text-slate-400">
+                                {scene.transition_preference}
+                              </span>
+                            </div>
+
+                            {/* Scene Action Buttons: Edit & Delete */}
+                            <div className="flex items-center gap-1.5 pl-2 border-l border-slate-800">
+                              <button
+                                type="button"
+                                title="Edit scene title, narration script, or visual style"
+                                onClick={() => handleStartEditScene(scene)}
+                                className="p-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-800 transition-colors"
+                              >
+                                <Edit3 className="w-3.5 h-3.5" />
+                              </button>
+
+                              <button
+                                type="button"
+                                title="Delete this scene from documentary"
+                                disabled={deletingSceneId === scene.id || script.scenes.length <= 1}
+                                onClick={() => handleDeleteScene(scene.id, scene.scene_order)}
+                                className="p-1.5 rounded-lg bg-slate-900 hover:bg-rose-950/40 text-slate-400 hover:text-rose-400 border border-slate-800 hover:border-rose-800/40 transition-colors disabled:opacity-40"
+                              >
+                                <Trash2 className={`w-3.5 h-3.5 ${deletingSceneId === scene.id ? "animate-spin text-rose-400" : ""}`} />
+                              </button>
+                            </div>
                           </div>
                         </div>
+
+                        {/* Inline Scene Edit Form if editing */}
+                        {editingSceneId === scene.id && (
+                          <div className="p-4 rounded-xl bg-slate-900/95 border border-indigo-500/40 space-y-3">
+                            <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+                              <span className="text-xs font-bold text-indigo-300 flex items-center gap-1.5">
+                                <Edit3 className="w-3.5 h-3.5" />
+                                <span>Edit Scene #{scene.scene_order} Details</span>
+                              </span>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingSceneId(null)}
+                                  className="text-xs text-slate-400 hover:text-white px-2.5 py-1 rounded-lg hover:bg-slate-800 transition-colors"
+                                >
+                                  Cancel
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={savingScene}
+                                  onClick={() => handleSaveScene(scene.id)}
+                                  className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold disabled:opacity-50 shadow-sm transition-all"
+                                >
+                                  <Save className={`w-3.5 h-3.5 ${savingScene ? "animate-spin" : ""}`} />
+                                  <span>{savingScene ? "Saving..." : "Save Scene"}</span>
+                                </button>
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                              <div>
+                                <label className="block text-[11px] font-semibold text-slate-400 mb-1">
+                                  Scene Title:
+                                </label>
+                                <input
+                                  type="text"
+                                  value={sceneEditForm.scene_title}
+                                  onChange={(e) =>
+                                    setSceneEditForm((prev) => ({ ...prev, scene_title: e.target.value }))
+                                  }
+                                  className="w-full px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-white text-xs focus:outline-none focus:border-indigo-500"
+                                />
+                              </div>
+
+                              <div className="grid grid-cols-2 gap-2">
+                                <div>
+                                  <label className="block text-[11px] font-semibold text-slate-400 mb-1">
+                                    Visual Type:
+                                  </label>
+                                  <select
+                                    value={sceneEditForm.preferred_visual_type}
+                                    onChange={(e) =>
+                                      setSceneEditForm((prev) => ({
+                                        ...prev,
+                                        preferred_visual_type: e.target.value,
+                                      }))
+                                    }
+                                    className="w-full px-2.5 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-white text-xs focus:outline-none focus:border-indigo-500"
+                                  >
+                                    <option value="archival_photograph">Archival Photograph</option>
+                                    <option value="stock_footage">Stock Footage</option>
+                                    <option value="ai_image">AI Image</option>
+                                    <option value="cinematic_concept">Cinematic Concept</option>
+                                  </select>
+                                </div>
+
+                                <div>
+                                  <label className="block text-[11px] font-semibold text-slate-400 mb-1">
+                                    Transition:
+                                  </label>
+                                  <select
+                                    value={sceneEditForm.transition_preference}
+                                    onChange={(e) =>
+                                      setSceneEditForm((prev) => ({
+                                        ...prev,
+                                        transition_preference: e.target.value,
+                                      }))
+                                    }
+                                    className="w-full px-2.5 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-white text-xs focus:outline-none focus:border-indigo-500"
+                                  >
+                                    <option value="fade">Fade</option>
+                                    <option value="crossfade">Crossfade</option>
+                                    <option value="cut">Direct Cut</option>
+                                    <option value="zoom">Zoom</option>
+                                  </select>
+                                </div>
+                              </div>
+                            </div>
+
+                            <div>
+                              <label className="block text-[11px] font-semibold text-slate-400 mb-1">
+                                Narration Voiceover Text:
+                              </label>
+                              <textarea
+                                rows={3}
+                                value={sceneEditForm.narration_text}
+                                onChange={(e) =>
+                                  setSceneEditForm((prev) => ({ ...prev, narration_text: e.target.value }))
+                                }
+                                className="w-full p-2.5 rounded-lg bg-slate-950 border border-slate-800 text-white text-xs focus:outline-none focus:border-indigo-500 font-sans leading-relaxed resize-y"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-[11px] font-semibold text-slate-400 mb-1">
+                                Visual Description / Direction:
+                              </label>
+                              <input
+                                type="text"
+                                value={sceneEditForm.visual_description}
+                                onChange={(e) =>
+                                  setSceneEditForm((prev) => ({
+                                    ...prev,
+                                    visual_description: e.target.value,
+                                  }))
+                                }
+                                className="w-full px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-white text-xs focus:outline-none focus:border-indigo-500"
+                              />
+                            </div>
+                          </div>
+                        )}
 
                         {/* Visual & Narration 2-Column Grid */}
                         <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
@@ -914,7 +1136,7 @@ function WorkspaceContent() {
 
                               return (
                                 <>
-                                  {/* Multi-Cut Selector Pills */}
+                                  {/* Multi-Cut Selector Pills + [+ Add Cut] Button */}
                                   <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
                                     {cuts.map((c) => {
                                       const isSelected = c.slot === activeSlot;
@@ -950,6 +1172,31 @@ function WorkspaceContent() {
                                         </button>
                                       );
                                     })}
+
+                                    {/* [+ Add New Cut] Button */}
+                                    <label
+                                      title="Add an extra video, image, or animation cut to this scene"
+                                      className="px-2.5 py-1 rounded-lg text-[10px] font-bold flex items-center gap-1 transition-all whitespace-nowrap border border-dashed border-indigo-500/50 hover:border-indigo-400 bg-indigo-950/30 hover:bg-indigo-900/40 text-indigo-300 hover:text-white cursor-pointer shadow-sm shrink-0"
+                                    >
+                                      <Plus className="w-3 h-3 text-indigo-400" />
+                                      <span>Add Cut</span>
+                                      <input
+                                        type="file"
+                                        accept="image/*,video/mp4,video/quicktime,video/webm,video/x-matroska,image/gif"
+                                        className="hidden"
+                                        disabled={uploadingSceneId === scene.id}
+                                        onChange={(e) => {
+                                          if (e.target.files && e.target.files[0]) {
+                                            const nextSlot = cuts.length;
+                                            setSelectedSceneSlots((prev) => ({
+                                              ...prev,
+                                              [scene.id]: nextSlot,
+                                            }));
+                                            handleUploadAsset(scene.id, e.target.files[0], nextSlot);
+                                          }
+                                        }}
+                                      />
+                                    </label>
                                   </div>
 
                                   {/* Visual Preview Frame */}
@@ -960,7 +1207,7 @@ function WorkspaceContent() {
                                         src={`${getSceneVisualUrl(scene.id, activeSlot)}&t=${assetTimestamp}`}
                                         controls
                                         playsInline
-                                        preload="metadata"
+                                        preload="auto"
                                         className="w-full h-full object-cover"
                                       />
                                     ) : (
@@ -1026,6 +1273,18 @@ function WorkspaceContent() {
                                         }}
                                       />
                                     </label>
+
+                                    {activeSlot > 0 && isUserCut && (
+                                      <button
+                                        type="button"
+                                        title="Delete this custom cut slot"
+                                        onClick={() => handleDeleteCut(scene.id, activeSlot)}
+                                        className="flex items-center gap-1 py-1.5 px-2.5 rounded-xl bg-slate-900 hover:bg-rose-950/40 border border-slate-800 hover:border-rose-700/60 text-slate-400 hover:text-rose-400 transition-all text-xs font-medium"
+                                      >
+                                        <X className="w-3.5 h-3.5" />
+                                        <span className="hidden sm:inline">Delete Cut</span>
+                                      </button>
+                                    )}
 
                                     {hasAnyUserCut && (
                                       <button
@@ -1338,26 +1597,66 @@ function WorkspaceContent() {
 
                     {/* HTML5 Video Player */}
                     <div className="relative rounded-2xl overflow-hidden border border-slate-800 bg-black shadow-2xl">
-                      <video
-                        controls
-                        preload="metadata"
-                        key={`${selectedVersionNum || latestVideo.version_number}-${videoTimestamp}`}
-                        className="w-full aspect-video"
-                        poster={script?.scenes[0]?.id ? `${getSceneVisualUrl(script.scenes[0].id)}?t=${assetTimestamp}` : undefined}
-                      >
-                        <source
+                      {videoPlayerError ? (
+                        <div className="w-full aspect-video flex flex-col items-center justify-center gap-3 bg-slate-950 p-6 text-center">
+                          <AlertCircle className="w-10 h-10 text-rose-400" />
+                          <div className="space-y-1">
+                            <h4 className="text-sm font-bold text-white">Video Stream Failed to Start</h4>
+                            <p className="text-xs text-slate-400 max-w-md">
+                              {videoPlayerError}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-3 pt-2">
+                            <button
+                              onClick={() => {
+                                setVideoPlayerError(null);
+                                setVideoTimestamp(Date.now());
+                              }}
+                              className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold flex items-center gap-2"
+                            >
+                              <RefreshCw className="w-3.5 h-3.5" />
+                              <span>Retry Stream</span>
+                            </button>
+                            <a
+                              href={`${getVideoStreamUrl(projectId, selectedVersionNum || undefined)}?download=true`}
+                              download={`documentary_v${selectedVersionNum || latestVideo.version_number}.mp4`}
+                              className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold flex items-center gap-2"
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                              <span>Download File</span>
+                            </a>
+                          </div>
+                        </div>
+                      ) : (
+                        <video
+                          key={`${selectedVersionNum || latestVideo.version_number}-${videoTimestamp}`}
                           src={`${getVideoStreamUrl(projectId, selectedVersionNum || undefined)}?t=${videoTimestamp}`}
-                          type="video/mp4"
-                        />
-                        <track
-                          kind="subtitles"
-                          src={`${getVideoSubtitlesUrl(projectId, "vtt", selectedVersionNum || undefined)}?t=${videoTimestamp}`}
-                          srcLang="en"
-                          label="English"
-                          default
-                        />
-                        Your browser does not support HTML5 video streaming.
-                      </video>
+                          controls
+                          playsInline
+                          crossOrigin="anonymous"
+                          preload="auto"
+                          className="w-full aspect-video bg-black"
+                          poster={script?.scenes[0]?.id ? `${getSceneVisualUrl(script.scenes[0].id)}?t=${assetTimestamp}` : undefined}
+                          onError={(e) => {
+                            const err = (e.target as HTMLVideoElement).error;
+                            console.error("Video player error:", err);
+                            setVideoPlayerError(
+                              err
+                                ? `Media Error Code ${err.code}: ${err.message || "Could not decode video stream"}`
+                                : "Playback could not be initialized."
+                            );
+                          }}
+                        >
+                          <track
+                            kind="subtitles"
+                            src={`${getVideoSubtitlesUrl(projectId, "vtt", selectedVersionNum || undefined)}?t=${videoTimestamp}`}
+                            srcLang="en"
+                            label="English"
+                            default
+                          />
+                          Your browser does not support HTML5 video streaming.
+                        </video>
+                      )}
                     </div>
 
                     {/* Video Information & Actions Card */}

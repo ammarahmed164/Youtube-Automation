@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from app.core.database import get_db
-from app.schemas.script import ScriptResponse, ScriptUpdateInput
+from app.schemas.script import ScriptResponse, ScriptUpdateInput, SceneResponse, SceneUpdateInput
 from app.services.script_service import ScriptService
 
 router = APIRouter()
@@ -41,4 +41,26 @@ def update_script(project_id: str, update_in: ScriptUpdateInput, db: Session = D
             detail=f"No script found for project '{project_id}' to update."
         )
     return revision
+
+@router.patch("/scenes/{scene_id}", response_model=SceneResponse)
+def update_scene(scene_id: str, update_in: SceneUpdateInput, db: Session = Depends(get_db)):
+    """Update scene metadata, narration script, title, or visual preference."""
+    try:
+        updated_scene = ScriptService.update_scene(db=db, scene_id=scene_id, update_in=update_in)
+        return updated_scene
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+@router.delete("/scenes/{scene_id}", response_model=ScriptResponse)
+def delete_scene(scene_id: str, db: Session = Depends(get_db)):
+    """Delete a scene and automatically re-sequence remaining scenes and script."""
+    try:
+        revision = ScriptService.delete_scene(db=db, scene_id=scene_id)
+        return revision
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 

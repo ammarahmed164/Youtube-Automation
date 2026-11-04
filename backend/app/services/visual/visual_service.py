@@ -772,8 +772,8 @@ class VisualService(BaseVisualService):
                 "url": f"/api/v1/projects/scenes/{scene.id}/visual?slot=0"
             })
 
-        # Check B-roll cuts (Slots 1, 2, 3...)
-        for slot in range(1, 5):
+        # Check B-roll cuts (Slots 1, 2, 3... up to 10)
+        for slot in range(1, 10):
             b_vid = visuals_dir / f"{scene.scene_id_str}_b{slot:02d}.mp4"
             b_img = visuals_dir / f"{scene.scene_id_str}_b{slot:02d}.jpg"
 
@@ -803,4 +803,28 @@ class VisualService(BaseVisualService):
             "total_cuts": len(cuts),
             "cuts": cuts
         }
+
+    @classmethod
+    def delete_cut_slot(cls, db: Session, scene_id: str, slot: int) -> Dict[str, Any]:
+        """Deletes a specific cut/B-roll slot file for a scene."""
+        scene = db.query(Scene).filter(Scene.id == scene_id).first()
+        if not scene:
+            raise ValueError(f"Scene '{scene_id}' not found.")
+
+        if slot == 0:
+            return cls.reset_scene_visual(db, scene_id)
+
+        project_dir = BASE_DIR / "workspace_data" / "projects" / scene.project_id
+        visuals_dir = project_dir / "visuals"
+        b_suffix = f"b{slot:02d}"
+
+        vid_path = visuals_dir / f"{scene.scene_id_str}_{b_suffix}.mp4"
+        img_path = visuals_dir / f"{scene.scene_id_str}_{b_suffix}.jpg"
+
+        if vid_path.exists():
+            vid_path.unlink()
+        if img_path.exists():
+            img_path.unlink()
+
+        return cls.get_scene_visuals_gallery(db, scene_id)
 

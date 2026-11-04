@@ -100,9 +100,10 @@ def get_render_status(project_id: str, db: Session = Depends(get_db)):
 def stream_project_video(
     project_id: str,
     version: Optional[int] = Query(None, description="Specific version number, defaults to latest"),
+    download: bool = Query(False, description="Set true to force browser download instead of inline streaming"),
     db: Session = Depends(get_db)
 ):
-    """Stream or download the rendered 1080p documentary MP4."""
+    """Stream or download the rendered 1080p documentary MP4 with smooth HTTP range support."""
     query = db.query(VideoVersion).filter(VideoVersion.project_id == project_id)
     if version:
         video_rec = query.filter(VideoVersion.version_number == version).first()
@@ -116,10 +117,14 @@ def stream_project_video(
     if not video_file.exists():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Rendered video file is missing from disk.")
 
+    disp = "attachment" if download else "inline"
+    filename_param = Path(video_rec.file_path).name if download else None
+
     return FileResponse(
         path=str(video_file),
         media_type="video/mp4",
-        filename=Path(video_rec.file_path).name,
+        filename=filename_param,
+        content_disposition_type=disp,
         headers={
             "Accept-Ranges": "bytes",
             "Cache-Control": "public, max-age=3600"
@@ -131,6 +136,7 @@ def get_project_subtitles(
     project_id: str,
     format: str = Query("vtt", description="'vtt' for HTML5 player or 'srt' for export"),
     version: Optional[int] = Query(None, description="Specific version number, defaults to latest"),
+    download: bool = Query(False, description="Set true to force browser download"),
     db: Session = Depends(get_db)
 ):
     """Retrieve synchronized subtitle track (.vtt or .srt) for the rendered video."""
@@ -150,11 +156,15 @@ def get_project_subtitles(
     if not sub_path.exists():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Subtitle file '{sub_filename}' not found.")
 
-    media_type = "text/vtt" if format == "vtt" else "text/plain"
+    media_type = "text/vtt; charset=utf-8" if format == "vtt" else "text/plain; charset=utf-8"
+    disp = "attachment" if download else "inline"
+    filename_param = sub_filename if download else None
+
     return FileResponse(
         path=str(sub_path),
         media_type=media_type,
-        filename=sub_filename
+        filename=filename_param,
+        content_disposition_type=disp
     )
 
 @router.get("/{project_id}/versions", response_model=List[VideoVersionResponse])

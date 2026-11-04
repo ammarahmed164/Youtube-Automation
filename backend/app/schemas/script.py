@@ -78,3 +78,13 @@ class ScriptUpdateInput(BaseModel):
     full_script: Optional[str] = None
     conclusion: Optional[str] = None
 
+class SceneUpdateInput(BaseModel):
+    scene_title: Optional[str] = None
+    purpose: Optional[str] = None
+    narration_text: Optional[str] = None
+    visual_description: Optional[str] = None
+    preferred_visual_type: Optional[str] = None
+    stock_keywords: Optional[List[str]] = None
+    on_screen_text: Optional[str] = None
+    transition_preference: Optional[str] = None
+

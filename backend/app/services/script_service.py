@@ -1,8 +1,9 @@
 from typing import Optional
 from sqlalchemy.orm import Session, selectinload
+from app.core.config import BASE_DIR
 from app.models.project import Project, ProjectActivity
-from app.models.generation import ScriptRevision, Scene
-from app.schemas.script import DocumentaryScriptPlan, ScriptUpdateInput
+from app.models.generation import ScriptRevision, Scene, SceneAsset, AudioAsset
+from app.schemas.script import DocumentaryScriptPlan, ScriptUpdateInput, SceneUpdateInput
 from app.services.ai.gemini_adapter import GeminiService
 
 class ScriptService:
@@ -128,4 +129,127 @@ class ScriptService:
         db.commit()
         db.refresh(revision)
         return revision
+
+    @staticmethod
+    def update_scene(db: Session, scene_id: str, update_in: SceneUpdateInput) -> Scene:
+        """Update any properties of an individual scene (narration, title, visual style)."""
+        scene = db.query(Scene).filter(Scene.id == scene_id).first()
+        if not scene:
+            raise ValueError(f"Scene '{scene_id}' not found.")
+
+        if update_in.scene_title is not None:
+            scene.scene_title = update_in.scene_title
+        if update_in.purpose is not None:
+            scene.purpose = update_in.purpose
+        if update_in.visual_description is not None:
+            scene.visual_description = update_in.visual_description
+        if update_in.preferred_visual_type is not None:
+            scene.preferred_visual_type = update_in.preferred_visual_type
+        if update_in.stock_keywords is not None:
+            scene.stock_keywords = update_in.stock_keywords
+        if update_in.on_screen_text is not None:
+            scene.on_screen_text = update_in.on_screen_text
+        if update_in.transition_preference is not None:
+            scene.transition_preference = update_in.transition_preference
+
+        # If narration text was updated, re-calculate estimated duration & reset audio duration
+        if update_in.narration_text is not None and update_in.narration_text != scene.narration_text:
+            scene.narration_text = update_in.narration_text
+            word_count = len(update_in.narration_text.split())
+            scene.estimated_duration_seconds = max(3.0, round(word_count / 2.5, 1))
+            scene.actual_audio_duration_seconds = None
+
+        # Re-sync continuous full_script on the parent ScriptRevision
+        scenes = (
+            db.query(Scene)
+            .filter(Scene.project_id == scene.project_id)
+            .order_by(Scene.scene_order)
+            .all()
+        )
+        latest_rev = (
+            db.query(ScriptRevision)
+            .filter(ScriptRevision.project_id == scene.project_id)
+            .order_by(ScriptRevision.revision_number.desc())
+            .first()
+        )
+        if latest_rev:
+            latest_rev.full_script = "\n\n".join(s.narration_text for s in scenes)
+
+        activity = ProjectActivity(
+            project_id=scene.project_id,
+            action_type="scene_updated",
+            actor="user",
+            details={"scene_id": scene.id, "scene_order": scene.scene_order}
+        )
+        db.add(activity)
+
+        db.commit()
+        db.refresh(scene)
+        return scene
+
+    @staticmethod
+    def delete_scene(db: Session, scene_id: str) -> Optional[ScriptRevision]:
+        """Permanently delete a scene from the documentary and sequentially re-order remaining scenes."""
+        scene = db.query(Scene).filter(Scene.id == scene_id).first()
+        if not scene:
+            raise ValueError(f"Scene '{scene_id}' not found.")
+
+        project_id = scene.project_id
+        scene_order = scene.scene_order
+
+        # Delete database assets & audio linked to this scene
+        db.query(SceneAsset).filter(SceneAsset.scene_id == scene.id).delete()
+        db.query(AudioAsset).filter(AudioAsset.scene_id == scene.id).delete()
+
+        # Delete workspace files for this scene
+        project_dir = BASE_DIR / "workspace_data" / "projects" / project_id
+        audio_file = project_dir / "audio" / f"{scene.scene_id_str}.wav"
+        if audio_file.exists():
+            try:
+                audio_file.unlink()
+            except Exception:
+                pass
+
+        visuals_dir = project_dir / "visuals"
+        if visuals_dir.exists():
+            for f in visuals_dir.glob(f"{scene.scene_id_str}*"):
+                try:
+                    f.unlink()
+                except Exception:
+                    pass
+
+        # Delete scene entity
+        db.delete(scene)
+        db.flush()
+
+        # Re-index remaining scenes sequentially (1, 2, 3...)
+        remaining_scenes = (
+            db.query(Scene)
+            .filter(Scene.project_id == project_id)
+            .order_by(Scene.scene_order)
+            .all()
+        )
+        for idx, s in enumerate(remaining_scenes, start=1):
+            s.scene_order = idx
+
+        # Re-sync continuous script
+        latest_rev = (
+            db.query(ScriptRevision)
+            .filter(ScriptRevision.project_id == project_id)
+            .order_by(ScriptRevision.revision_number.desc())
+            .first()
+        )
+        if latest_rev:
+            latest_rev.full_script = "\n\n".join(s.narration_text for s in remaining_scenes)
+
+        activity = ProjectActivity(
+            project_id=project_id,
+            action_type="scene_deleted",
+            actor="user",
+            details={"deleted_scene_order": scene_order, "remaining_count": len(remaining_scenes)}
+        )
+        db.add(activity)
+
+        db.commit()
+        return ScriptService.get_latest_script(db, project_id)
 

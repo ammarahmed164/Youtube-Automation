@@ -57,7 +57,12 @@ def get_scene_visual(
         # Check custom video upload first
         custom_vid = visuals_dir / f"{scene.scene_id_str}_upload.mp4"
         if custom_vid.exists():
-            return FileResponse(path=str(custom_vid), media_type="video/mp4", filename=custom_vid.name)
+            return FileResponse(
+                path=str(custom_vid),
+                media_type="video/mp4",
+                content_disposition_type="inline",
+                headers={"Accept-Ranges": "bytes", "Cache-Control": "public, max-age=86400"}
+            )
 
         # Check standard jpg
         main_jpg = visuals_dir / f"{scene.scene_id_str}.jpg"
@@ -65,7 +70,7 @@ def get_scene_visual(
             return FileResponse(
                 path=str(main_jpg),
                 media_type="image/jpeg",
-                filename=main_jpg.name,
+                content_disposition_type="inline",
                 headers={"Cache-Control": "public, max-age=86400"}
             )
     else:
@@ -73,14 +78,19 @@ def get_scene_visual(
         b_suffix = f"b{slot:02d}"
         b_vid = visuals_dir / f"{scene.scene_id_str}_{b_suffix}.mp4"
         if b_vid.exists():
-            return FileResponse(path=str(b_vid), media_type="video/mp4", filename=b_vid.name)
+            return FileResponse(
+                path=str(b_vid),
+                media_type="video/mp4",
+                content_disposition_type="inline",
+                headers={"Accept-Ranges": "bytes", "Cache-Control": "public, max-age=86400"}
+            )
 
         b_jpg = visuals_dir / f"{scene.scene_id_str}_{b_suffix}.jpg"
         if b_jpg.exists():
             return FileResponse(
                 path=str(b_jpg),
                 media_type="image/jpeg",
-                filename=b_jpg.name,
+                content_disposition_type="inline",
                 headers={"Cache-Control": "public, max-age=86400"}
             )
 
@@ -93,8 +103,8 @@ def get_scene_visual(
             return FileResponse(
                 path=str(fp),
                 media_type=media_type,
-                filename=fp.name,
-                headers={"Cache-Control": "public, max-age=86400"}
+                content_disposition_type="inline",
+                headers={"Accept-Ranges": "bytes", "Cache-Control": "public, max-age=86400"}
             )
 
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Visual file missing from workspace.")
@@ -149,6 +159,21 @@ def reset_scene_visual(scene_id: str, db: Session = Depends(get_db)):
             "status": "success",
             "message": "Scene visual reset back to AI archival visual.",
             "visual": result
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+@router.delete("/scenes/{scene_id}/cuts/{slot}", status_code=status.HTTP_200_OK)
+def delete_scene_cut(scene_id: str, slot: int, db: Session = Depends(get_db)):
+    """Delete a specific cut slot file for a scene."""
+    try:
+        gallery = VisualService.delete_cut_slot(db=db, scene_id=scene_id, slot=slot)
+        return {
+            "status": "success",
+            "message": f"Cut #{slot} removed successfully.",
+            "gallery": gallery
         }
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
