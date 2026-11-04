@@ -70,6 +70,13 @@ export interface SceneAssetItem {
   duration_seconds?: number | null;
 }
 
+export interface AudioAssetItem {
+  id: string;
+  voice_preset: string;
+  file_path: string;
+  duration_seconds: number;
+}
+
 export interface SceneItem {
   id: string;
   scene_order: number;
@@ -86,6 +93,7 @@ export interface SceneItem {
   on_screen_text?: string | null;
   transition_preference: string;
   assets?: SceneAssetItem[];
+  audio?: AudioAssetItem | null;
 }
 
 export interface ScriptRevisionData {

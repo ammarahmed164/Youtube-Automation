@@ -41,6 +41,14 @@ class SceneAssetResponse(BaseModel):
 
     model_config = {"from_attributes": True}
 
+class AudioAssetResponse(BaseModel):
+    id: str
+    voice_preset: str
+    file_path: str
+    duration_seconds: float
+
+    model_config = {"from_attributes": True}
+
 class SceneResponse(BaseModel):
     id: str
     scene_order: int
@@ -57,6 +65,7 @@ class SceneResponse(BaseModel):
     on_screen_text: Optional[str]
     transition_preference: str
     assets: List[SceneAssetResponse] = []
+    audio: Optional[AudioAssetResponse] = None
 
     model_config = {"from_attributes": True}
 

@@ -144,6 +144,7 @@ function WorkspaceContent() {
   const [isPlayingPreview, setIsPlayingPreview] = useState(false);
   const [previewAudioObj, setPreviewAudioObj] = useState<HTMLAudioElement | null>(null);
   const [generatingSceneVoiceId, setGeneratingSceneVoiceId] = useState<string | null>(null);
+  const [sceneSelectedVoices, setSceneSelectedVoices] = useState<Record<string, string>>({});
 
   // Add Scene Modal & Creation states
   const [showAddSceneModal, setShowAddSceneModal] = useState(false);
@@ -431,10 +432,11 @@ function WorkspaceContent() {
     }
   };
 
-  const handleGenerateSceneVoice = async (sceneId: string) => {
+  const handleGenerateSceneVoice = async (sceneId: string, overrideVoice?: string) => {
     setGeneratingSceneVoiceId(sceneId);
     try {
-      await generateSceneVoice(sceneId, selectedVoiceId || undefined);
+      const voiceToUse = overrideVoice || sceneSelectedVoices[sceneId] || selectedVoiceId || undefined;
+      await generateSceneVoice(sceneId, voiceToUse);
       const sc = await fetchScript(projectId);
       if (sc) setScript(sc);
       setAssetTimestamp(Date.now());
@@ -1568,42 +1570,184 @@ function WorkspaceContent() {
                             })()}
                           </div>
 
-                          {/* Right Column: Narration & Audio Player (7 cols) */}
+                          {/* Right Column: Narration & Audio Studio (7 cols) */}
                           <div className="md:col-span-7 flex flex-col justify-between space-y-3">
                             <div className="p-3.5 rounded-xl bg-slate-900/60 border border-slate-800/80 space-y-1">
                               <span className="text-[10px] font-bold text-indigo-400 uppercase tracking-wider block">
-                                Voiceover Narration
+                                Voiceover Narration Script
                               </span>
                               <p className="text-xs text-slate-200 leading-relaxed font-sans">{scene.narration_text}</p>
                             </div>
 
-                            {/* Audio Player if generated */}
-                            {hasAudio ? (
-                              <div className="p-2.5 rounded-xl bg-indigo-950/30 border border-indigo-900/40 flex items-center gap-3">
-                                <div className="w-8 h-8 rounded-lg bg-indigo-500/20 text-indigo-400 flex items-center justify-center shrink-0">
-                                  <Volume2 className="w-4 h-4" />
-                                </div>
-                                <div className="flex-1 min-w-0">
-                                  <div className="flex items-center justify-between text-[11px] mb-1">
-                                    <span className="font-semibold text-slate-300">Neural Voiceover</span>
-                                    <span className="text-emerald-400 font-mono text-[10px]">
-                                      {scene.actual_audio_duration_seconds?.toFixed(1)}s
+                            {/* Scene-Specific Voice Selector & Narration Controls */}
+                            {(() => {
+                              const activeVoicePreset =
+                                sceneSelectedVoices[scene.id] ||
+                                scene.audio?.voice_preset ||
+                                selectedVoiceId ||
+                                "ur-PK-AsadNeural";
+                              const currentVoiceObj = availableVoices.find((v) => v.id === activeVoicePreset);
+                              const existingVoicePreset = scene.audio?.voice_preset;
+                              const isVoiceChanged =
+                                !!existingVoicePreset && existingVoicePreset !== activeVoicePreset;
+
+                              return (
+                                <div className="p-3 rounded-xl bg-slate-900/80 border border-slate-800 space-y-2.5">
+                                  <div className="flex items-center justify-between text-[11px]">
+                                    <span className="font-semibold text-slate-300 flex items-center gap-1.5">
+                                      <Mic className="w-3.5 h-3.5 text-indigo-400" />
+                                      <span>Scene Voice:</span>
                                     </span>
+                                    {existingVoicePreset && (
+                                      <span className="text-[10px] text-slate-400 font-mono flex items-center gap-1">
+                                        <span>Current:</span>
+                                        <b className="text-indigo-300">
+                                          {availableVoices.find((v) => v.id === existingVoicePreset)?.name ||
+                                            existingVoicePreset}
+                                        </b>
+                                      </span>
+                                    )}
                                   </div>
-                                  <audio
-                                    controls
-                                    src={`${getSceneAudioUrl(scene.id)}?t=${assetTimestamp}`}
-                                    className="w-full h-7 text-xs"
-                                    preload="none"
-                                  />
+
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    {/* Multi-Voice Selector Dropdown */}
+                                    <select
+                                      value={activeVoicePreset}
+                                      onChange={(e) =>
+                                        setSceneSelectedVoices((prev) => ({
+                                          ...prev,
+                                          [scene.id]: e.target.value,
+                                        }))
+                                      }
+                                      className="flex-1 min-w-[190px] bg-slate-950 border border-slate-700 hover:border-indigo-500 text-xs text-white rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-indigo-500 font-sans truncate"
+                                    >
+                                      <optgroup label="Urdu Voices (اردو)">
+                                        {availableVoices
+                                          .filter((v) => v.language.toLowerCase() === "urdu")
+                                          .map((v) => (
+                                            <option key={v.id} value={v.id}>
+                                              {v.name} ({v.locale.includes("PK") ? "Pakistan" : "India"} &bull;{" "}
+                                              {v.tone.split(" ")[0]} {v.gender})
+                                            </option>
+                                          ))}
+                                      </optgroup>
+                                      <optgroup label="Hindi Voices (हिंदी)">
+                                        {availableVoices
+                                          .filter((v) => v.language.toLowerCase() === "hindi")
+                                          .map((v) => (
+                                            <option key={v.id} value={v.id}>
+                                              {v.name} ({v.tone.split(" ")[0]} {v.gender})
+                                            </option>
+                                          ))}
+                                      </optgroup>
+                                      <optgroup label="English Voices (US / UK)">
+                                        {availableVoices
+                                          .filter((v) => v.language.toLowerCase() === "english")
+                                          .map((v) => (
+                                            <option key={v.id} value={v.id}>
+                                              {v.name} ({v.locale.includes("GB") ? "BBC UK" : "US"} &bull;{" "}
+                                              {v.gender})
+                                            </option>
+                                          ))}
+                                      </optgroup>
+                                      <optgroup label="Arabic & Spanish">
+                                        {availableVoices
+                                          .filter(
+                                            (v) =>
+                                              !["urdu", "hindi", "english"].includes(
+                                                v.language.toLowerCase()
+                                              )
+                                          )
+                                          .map((v) => (
+                                            <option key={v.id} value={v.id}>
+                                              {v.name} ({v.language} &bull; {v.gender})
+                                            </option>
+                                          ))}
+                                      </optgroup>
+                                    </select>
+
+                                    {/* Play 2-Second Preview */}
+                                    <button
+                                      type="button"
+                                      onClick={() => handlePlayVoicePreview(activeVoicePreset)}
+                                      disabled={isPlayingPreview}
+                                      className="p-1.5 rounded-lg bg-indigo-950/80 hover:bg-indigo-900 text-indigo-300 hover:text-white border border-indigo-800/40 transition-colors"
+                                      title={`Listen to sample of ${currentVoiceObj?.name || activeVoicePreset}`}
+                                    >
+                                      <Volume2
+                                        className={`w-3.5 h-3.5 ${
+                                          isPlayingPreview ? "animate-pulse text-emerald-400" : ""
+                                        }`}
+                                      />
+                                    </button>
+
+                                    {/* Synthesize / Apply Voice to This Scene Button */}
+                                    <button
+                                      type="button"
+                                      disabled={generatingSceneVoiceId === scene.id}
+                                      onClick={() =>
+                                        handleGenerateSceneVoice(scene.id, activeVoicePreset)
+                                      }
+                                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm transition-all disabled:opacity-50 ${
+                                        hasAudio
+                                          ? isVoiceChanged
+                                            ? "bg-amber-600 hover:bg-amber-500 text-white shadow-amber-950/40"
+                                            : "bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-950/40"
+                                          : "bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-950/40"
+                                      }`}
+                                      title="Generate voiceover for this scene with selected voice"
+                                    >
+                                      <Mic
+                                        className={`w-3.5 h-3.5 ${
+                                          generatingSceneVoiceId === scene.id ? "animate-spin" : ""
+                                        }`}
+                                      />
+                                      <span>
+                                        {generatingSceneVoiceId === scene.id
+                                          ? "Synthesizing..."
+                                          : hasAudio
+                                          ? isVoiceChanged
+                                            ? "Apply Voice"
+                                            : "Re-Voice"
+                                          : "Synthesize Audio"}
+                                      </span>
+                                    </button>
+                                  </div>
+
+                                  {/* Audio Player if generated */}
+                                  {hasAudio ? (
+                                    <div className="p-2.5 rounded-xl bg-indigo-950/30 border border-indigo-900/40 flex items-center gap-3 mt-1">
+                                      <div className="w-8 h-8 rounded-lg bg-indigo-500/20 text-indigo-400 flex items-center justify-center shrink-0">
+                                        <Volume2 className="w-4 h-4" />
+                                      </div>
+                                      <div className="flex-1 min-w-0">
+                                        <div className="flex items-center justify-between text-[11px] mb-1">
+                                          <span className="font-semibold text-slate-300">
+                                            {currentVoiceObj?.name || "Neural Voice"} Narration
+                                          </span>
+                                          <span className="text-emerald-400 font-mono text-[10px]">
+                                            {scene.actual_audio_duration_seconds?.toFixed(1)}s
+                                          </span>
+                                        </div>
+                                        <audio
+                                          controls
+                                          src={`${getSceneAudioUrl(scene.id)}?t=${assetTimestamp}`}
+                                          className="w-full h-7 text-xs"
+                                          preload="none"
+                                        />
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <div className="p-2 rounded-lg bg-slate-950/60 border border-dashed border-slate-800 text-[11px] text-slate-400 flex items-center justify-between mt-1">
+                                      <span>Audio not synthesized yet for this scene</span>
+                                      <span className="text-[10px] text-indigo-400 font-semibold">
+                                        Select voice above & click Synthesize
+                                      </span>
+                                    </div>
+                                  )}
                                 </div>
-                              </div>
-                            ) : (
-                              <div className="p-2.5 rounded-xl bg-slate-900/40 border border-dashed border-slate-800 text-[11px] text-slate-500 flex items-center justify-between">
-                                <span>Audio narration not synthesized yet</span>
-                                <span className="text-[10px] text-indigo-400 font-semibold">Piper TTS ready</span>
-                              </div>
-                            )}
+                              );
+                            })()}
                           </div>
                         </div>
 
