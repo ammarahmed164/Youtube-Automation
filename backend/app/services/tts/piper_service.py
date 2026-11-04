@@ -20,10 +20,27 @@ VOICE_MODEL_MAP = {
     "natural_male": MODELS_DIR / "en_US-ryan-medium.onnx",
 }
 
+def is_urdu_or_arabic(text: str) -> bool:
+    """Checks if text contains Arabic/Urdu Unicode characters."""
+    for char in text:
+        code = ord(char)
+        if (0x0600 <= code <= 0x06FF) or (0x0750 <= code <= 0x077F) or (0xFB50 <= code <= 0xFDFF) or (0xFE70 <= code <= 0xFEFF):
+            return True
+    return False
+
+def is_hindi(text: str) -> bool:
+    """Checks if text contains Devanagari/Hindi Unicode characters."""
+    for char in text:
+        if 0x0900 <= ord(char) <= 0x097F:
+            return True
+    return False
+
 class PiperTTSService(BaseTTSService):
     """
-    Offline local Neural Text-to-Speech service using Piper.
-    Synthesizes narration per scene and measures exact millisecond audio duration.
+    Multilingual Neural Text-to-Speech Engine:
+    - English: Offline local Piper ONNX neural models with automatic fallback.
+    - Urdu / Hindi / Multilingual: High-fidelity native neural speech synthesis via gTTS & FFmpeg.
+    Outputs broadcast-grade 22050Hz mono WAV audio with accurate duration measurement.
     """
 
     def __init__(self):
@@ -43,53 +60,130 @@ class PiperTTSService(BaseTTSService):
             raise FileNotFoundError(f"Voice model for preset '{preset}' not found in {MODELS_DIR}")
         return model_path
 
+    @classmethod
+    def synthesize_multilingual_wav(cls, text: str, lang_code: str, output_path: Path) -> Dict[str, Any]:
+        """
+        Synthesizes multilingual speech (Urdu, Hindi, Spanish, etc.)
+        and encodes directly to standard 22050Hz mono WAV via FFmpeg.
+        """
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_mp3 = output_path.with_suffix(".temp.mp3")
+
+        try:
+            from gtts import gTTS
+            tts = gTTS(text=text, lang=lang_code)
+            tts.save(str(temp_mp3))
+
+            ffmpeg_bin = settings.get_ffmpeg_path()
+            cmd = [
+                ffmpeg_bin, "-y",
+                "-i", str(temp_mp3),
+                "-ar", "22050",
+                "-ac", "1",
+                str(output_path)
+            ]
+            res = subprocess.run(cmd, capture_output=True, text=True)
+            if res.returncode != 0:
+                raise RuntimeError(f"FFmpeg audio conversion failed: {res.stderr[-200:]}")
+
+            with wave.open(str(output_path), "rb") as wf:
+                frames = wf.getnframes()
+                rate = wf.getframerate()
+                duration_seconds = round(frames / float(rate), 2)
+
+            return {
+                "file_path": str(output_path.relative_to(BASE_DIR)),
+                "duration_seconds": duration_seconds,
+                "sample_rate": rate
+            }
+        finally:
+            if temp_mp3.exists():
+                try:
+                    temp_mp3.unlink()
+                except Exception:
+                    pass
+
     async def synthesize_scene(
         self,
         scene_id: str,
         text: str,
         voice_preset: str,
-        output_path: Path
+        output_path: Path,
+        language: str = "English"
     ) -> Dict[str, Any]:
         """
-        Synthesizes speech for a single scene and returns duration metadata.
+        Synthesizes speech for a single scene with intelligent language routing:
+        - Urdu / Arabic script -> Native Urdu neural voice
+        - Hindi / Devanagari script -> Native Hindi neural voice
+        - Spanish -> Native Spanish neural voice
+        - English -> Piper offline cinematic neural voice with seamless fallback
         """
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        model_path = self.get_model_path(voice_preset)
+        lang_lower = (language or "English").lower()
 
-        cmd = [
-            str(self.piper_exe),
-            "--model", str(model_path),
-            "--output_file", str(output_path),
-        ]
+        # Check for non-English language or Unicode script
+        if lang_lower == "urdu" or is_urdu_or_arabic(text):
+            logger.info(f"Synthesizing scene {scene_id} with native Urdu speech synthesis...")
+            meta = self.synthesize_multilingual_wav(text=text, lang_code="ur", output_path=output_path)
+            meta["scene_id"] = scene_id
+            meta["voice_preset"] = f"urdu_neural_{voice_preset}"
+            return meta
 
-        # Execute Piper
-        process = subprocess.Popen(
-            cmd,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8"
-        )
-        stdout, stderr = process.communicate(input=text)
+        if lang_lower == "hindi" or is_hindi(text):
+            logger.info(f"Synthesizing scene {scene_id} with native Hindi speech synthesis...")
+            meta = self.synthesize_multilingual_wav(text=text, lang_code="hi", output_path=output_path)
+            meta["scene_id"] = scene_id
+            meta["voice_preset"] = f"hindi_neural_{voice_preset}"
+            return meta
 
-        if process.returncode != 0:
-            logger.error(f"Piper TTS error for scene {scene_id}: {stderr}")
-            raise RuntimeError(f"Piper TTS synthesis failed: {stderr}")
+        if lang_lower == "spanish":
+            logger.info(f"Synthesizing scene {scene_id} with native Spanish speech synthesis...")
+            meta = self.synthesize_multilingual_wav(text=text, lang_code="es", output_path=output_path)
+            meta["scene_id"] = scene_id
+            meta["voice_preset"] = f"spanish_neural_{voice_preset}"
+            return meta
 
-        # Measure exact duration
-        with wave.open(str(output_path), "rb") as wf:
-            frames = wf.getnframes()
-            rate = wf.getframerate()
-            duration_seconds = round(frames / float(rate), 2)
+        # English: Attempt Piper offline model first
+        try:
+            model_path = self.get_model_path(voice_preset)
+            cmd = [
+                str(self.piper_exe),
+                "--model", str(model_path),
+                "--output_file", str(output_path),
+            ]
 
-        return {
-            "scene_id": scene_id,
-            "file_path": str(output_path.relative_to(BASE_DIR)),
-            "duration_seconds": duration_seconds,
-            "sample_rate": rate,
-            "voice_preset": voice_preset
-        }
+            process = subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8"
+            )
+            stdout, stderr = process.communicate(input=text)
+
+            if process.returncode != 0:
+                raise RuntimeError(f"Piper returned non-zero code: {stderr}")
+
+            with wave.open(str(output_path), "rb") as wf:
+                frames = wf.getnframes()
+                rate = wf.getframerate()
+                duration_seconds = round(frames / float(rate), 2)
+
+            return {
+                "scene_id": scene_id,
+                "file_path": str(output_path.relative_to(BASE_DIR)),
+                "duration_seconds": duration_seconds,
+                "sample_rate": rate,
+                "voice_preset": voice_preset
+            }
+
+        except Exception as e:
+            logger.warning(f"Piper TTS failed for scene {scene_id} ({e}). Falling back to multilingual neural TTS...")
+            meta = self.synthesize_multilingual_wav(text=text, lang_code="en", output_path=output_path)
+            meta["scene_id"] = scene_id
+            meta["voice_preset"] = f"fallback_en_{voice_preset}"
+            return meta
 
     @staticmethod
     async def synthesize_project_narration(db: Session, project_id: str) -> List[Dict[str, Any]]:
@@ -117,13 +211,16 @@ class PiperTTSService(BaseTTSService):
         results = []
         audio_dir = settings.WORKSPACE_DATA_DIR / "projects" / project_id / "audio"
 
+        lang = project.settings.language if project.settings else "English"
+
         for scene in sorted(latest_rev.scenes, key=lambda s: s.scene_order):
             out_file = audio_dir / f"{scene.scene_id_str}.wav"
             meta = await tts.synthesize_scene(
                 scene_id=scene.id,
                 text=scene.narration_text,
                 voice_preset=preset,
-                output_path=out_file
+                output_path=out_file,
+                language=lang
             )
 
             # Update scene record with actual audio duration

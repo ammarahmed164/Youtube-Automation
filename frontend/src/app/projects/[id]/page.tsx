@@ -787,7 +787,7 @@ function WorkspaceContent() {
                       className="flex items-center gap-2 text-xs font-semibold px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white transition-all disabled:opacity-50 shadow-md shadow-indigo-950/40"
                     >
                       <Mic className={`w-3.5 h-3.5 ${generatingVoice ? "animate-spin" : ""}`} />
-                      <span>{generatingVoice ? "Synthesizing Audio..." : "Generate Voiceover (Piper TTS)"}</span>
+                      <span>{generatingVoice ? "Synthesizing Audio..." : "Generate Voiceover (AI Neural)"}</span>
                     </button>
 
                     <button
@@ -796,7 +796,7 @@ function WorkspaceContent() {
                       className="flex items-center gap-2 text-xs font-semibold px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white transition-all disabled:opacity-50 shadow-md shadow-purple-950/40"
                     >
                       <ImageIcon className={`w-3.5 h-3.5 ${generatingVisuals ? "animate-spin" : ""}`} />
-                      <span>{generatingVisuals ? "Acquiring Visuals..." : "Generate Visuals (NASA & Canvas)"}</span>
+                      <span>{generatingVisuals ? "Acquiring Visuals..." : "Generate Scene Visuals (Stock & AI)"}</span>
                     </button>
 
                     <button

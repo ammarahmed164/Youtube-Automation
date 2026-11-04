@@ -107,11 +107,13 @@ class ModificationService:
             # Re-synthesize audio if narration was updated
             if narration_changed:
                 target_audio_file = project_dir / "audio" / f"{scene.scene_id_str}.wav"
+                proj_lang = project.settings.language if project.settings else "English"
                 tts_result = await tts_service.synthesize_scene(
                     scene_id=scene.id,
                     text=scene.narration_text,
                     voice_preset=voice_preset,
-                    output_path=target_audio_file
+                    output_path=target_audio_file,
+                    language=proj_lang
                 )
                 scene.actual_audio_duration_seconds = tts_result["duration_seconds"]
 
