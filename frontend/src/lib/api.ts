@@ -121,9 +121,25 @@ export async function generateProjectVisuals(projectId: string, forceRegenerate:
   return res.json();
 }
 
-export function getSceneVisualUrl(sceneId: string, slot?: number): string {
-  const slotParam = slot !== undefined ? `?slot=${slot}` : "";
-  return `${API_BASE_URL}/projects/scenes/${sceneId}/visual${slotParam}`;
+export function getSceneVisualUrl(
+  sceneId: string,
+  slotOrOptions?: number | null | { slot?: number; t?: number },
+  timestamp?: number
+): string {
+  const params = new URLSearchParams();
+  if (typeof slotOrOptions === "object" && slotOrOptions !== null) {
+    if (slotOrOptions.slot !== undefined && slotOrOptions.slot !== null) {
+      params.set("slot", slotOrOptions.slot.toString());
+    }
+    if (slotOrOptions.t) params.set("t", slotOrOptions.t.toString());
+  } else {
+    if (slotOrOptions !== undefined && slotOrOptions !== null) {
+      params.set("slot", slotOrOptions.toString());
+    }
+    if (timestamp) params.set("t", timestamp.toString());
+  }
+  const qs = params.toString();
+  return `${API_BASE_URL}/projects/scenes/${sceneId}/visual${qs ? `?${qs}` : ""}`;
 }
 
 export async function uploadSceneAsset(sceneId: string, file: File, cutSlot: number = 0): Promise<any> {
@@ -241,14 +257,51 @@ export async function fetchRenderStatus(projectId: string): Promise<any> {
   return res.json();
 }
 
-export function getVideoStreamUrl(projectId: string, version?: number): string {
-  const vParam = version ? `?version=${version}` : "";
-  return `${API_BASE_URL}/projects/${projectId}/video${vParam}`;
+export function getVideoStreamUrl(
+  projectId: string,
+  versionOrOptions?: number | null | { version?: number | null; download?: boolean; t?: number },
+  download?: boolean,
+  timestamp?: number
+): string {
+  const params = new URLSearchParams();
+  if (typeof versionOrOptions === "object" && versionOrOptions !== null) {
+    if (versionOrOptions.version !== undefined && versionOrOptions.version !== null) {
+      params.set("version", versionOrOptions.version.toString());
+    }
+    if (versionOrOptions.download) params.set("download", "true");
+    if (versionOrOptions.t) params.set("t", versionOrOptions.t.toString());
+  } else {
+    if (versionOrOptions !== undefined && versionOrOptions !== null) {
+      params.set("version", versionOrOptions.toString());
+    }
+    if (download) params.set("download", "true");
+    if (timestamp) params.set("t", timestamp.toString());
+  }
+  const qs = params.toString();
+  return `${API_BASE_URL}/projects/${projectId}/video${qs ? `?${qs}` : ""}`;
 }
 
-export function getVideoSubtitlesUrl(projectId: string, format: string = "vtt", version?: number): string {
-  const vParam = version ? `&version=${version}` : "";
-  return `${API_BASE_URL}/projects/${projectId}/subtitles?format=${format}${vParam}`;
+export function getVideoSubtitlesUrl(
+  projectId: string,
+  format: string = "vtt",
+  versionOrOptions?: number | null | { version?: number | null; download?: boolean; t?: number },
+  timestamp?: number
+): string {
+  const params = new URLSearchParams();
+  params.set("format", format);
+  if (typeof versionOrOptions === "object" && versionOrOptions !== null) {
+    if (versionOrOptions.version !== undefined && versionOrOptions.version !== null) {
+      params.set("version", versionOrOptions.version.toString());
+    }
+    if (versionOrOptions.download) params.set("download", "true");
+    if (versionOrOptions.t) params.set("t", versionOrOptions.t.toString());
+  } else {
+    if (versionOrOptions !== undefined && versionOrOptions !== null) {
+      params.set("version", versionOrOptions.toString());
+    }
+    if (timestamp) params.set("t", timestamp.toString());
+  }
+  return `${API_BASE_URL}/projects/${projectId}/subtitles?${params.toString()}`;
 }
 
 export async function fetchVideoVersions(projectId: string): Promise<any[]> {

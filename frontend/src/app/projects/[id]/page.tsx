@@ -1618,7 +1618,7 @@ function WorkspaceContent() {
                               <span>Retry Stream</span>
                             </button>
                             <a
-                              href={`${getVideoStreamUrl(projectId, selectedVersionNum || undefined)}?download=true`}
+                              href={getVideoStreamUrl(projectId, { version: selectedVersionNum || latestVideo.version_number, download: true })}
                               download={`documentary_v${selectedVersionNum || latestVideo.version_number}.mp4`}
                               className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold flex items-center gap-2"
                             >
@@ -1630,13 +1630,13 @@ function WorkspaceContent() {
                       ) : (
                         <video
                           key={`${selectedVersionNum || latestVideo.version_number}-${videoTimestamp}`}
-                          src={`${getVideoStreamUrl(projectId, selectedVersionNum || undefined)}?t=${videoTimestamp}`}
+                          src={getVideoStreamUrl(projectId, { version: selectedVersionNum || latestVideo.version_number, t: videoTimestamp })}
                           controls
                           playsInline
                           crossOrigin="anonymous"
                           preload="auto"
                           className="w-full aspect-video bg-black"
-                          poster={script?.scenes[0]?.id ? `${getSceneVisualUrl(script.scenes[0].id)}?t=${assetTimestamp}` : undefined}
+                          poster={script?.scenes[0]?.id ? getSceneVisualUrl(script.scenes[0].id, { t: assetTimestamp }) : undefined}
                           onError={(e) => {
                             const err = (e.target as HTMLVideoElement).error;
                             console.error("Video player error:", err);
@@ -1649,7 +1649,7 @@ function WorkspaceContent() {
                         >
                           <track
                             kind="subtitles"
-                            src={`${getVideoSubtitlesUrl(projectId, "vtt", selectedVersionNum || undefined)}?t=${videoTimestamp}`}
+                            src={getVideoSubtitlesUrl(projectId, "vtt", { version: selectedVersionNum || latestVideo.version_number, t: videoTimestamp })}
                             srcLang="en"
                             label="English"
                             default
@@ -1674,7 +1674,7 @@ function WorkspaceContent() {
 
                         <div className="flex flex-wrap items-center gap-2.5">
                           <a
-                            href={getVideoStreamUrl(projectId, selectedVersionNum || undefined)}
+                            href={getVideoStreamUrl(projectId, { version: selectedVersionNum || latestVideo.version_number, download: true })}
                             download={`documentary_v${selectedVersionNum || latestVideo.version_number}.mp4`}
                             className="flex items-center gap-2 text-xs font-semibold px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 transition-colors"
                           >
@@ -1683,7 +1683,7 @@ function WorkspaceContent() {
                           </a>
 
                           <a
-                            href={getVideoSubtitlesUrl(projectId, "srt", selectedVersionNum || undefined)}
+                            href={getVideoSubtitlesUrl(projectId, "srt", { version: selectedVersionNum || latestVideo.version_number, download: true })}
                             download={`subtitles_v${selectedVersionNum || latestVideo.version_number}.srt`}
                             className="flex items-center gap-2 text-xs font-semibold px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 transition-colors"
                           >

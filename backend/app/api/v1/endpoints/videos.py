@@ -99,14 +99,24 @@ def get_render_status(project_id: str, db: Session = Depends(get_db)):
 @router.get("/{project_id}/video")
 def stream_project_video(
     project_id: str,
-    version: Optional[int] = Query(None, description="Specific version number, defaults to latest"),
+    version: Optional[str] = Query(None, description="Specific version number, defaults to latest"),
     download: bool = Query(False, description="Set true to force browser download instead of inline streaming"),
     db: Session = Depends(get_db)
 ):
     """Stream or download the rendered 1080p documentary MP4 with smooth HTTP range support."""
     query = db.query(VideoVersion).filter(VideoVersion.project_id == project_id)
-    if version:
-        video_rec = query.filter(VideoVersion.version_number == version).first()
+
+    v_int = None
+    if version is not None:
+        try:
+            clean_v = str(version).split("?")[0].split("&")[0].strip()
+            if clean_v.isdigit():
+                v_int = int(clean_v)
+        except Exception:
+            v_int = None
+
+    if v_int is not None:
+        video_rec = query.filter(VideoVersion.version_number == v_int).first()
     else:
         video_rec = query.order_by(VideoVersion.version_number.desc()).first()
 
@@ -135,14 +145,24 @@ def stream_project_video(
 def get_project_subtitles(
     project_id: str,
     format: str = Query("vtt", description="'vtt' for HTML5 player or 'srt' for export"),
-    version: Optional[int] = Query(None, description="Specific version number, defaults to latest"),
+    version: Optional[str] = Query(None, description="Specific version number, defaults to latest"),
     download: bool = Query(False, description="Set true to force browser download"),
     db: Session = Depends(get_db)
 ):
     """Retrieve synchronized subtitle track (.vtt or .srt) for the rendered video."""
     query = db.query(VideoVersion).filter(VideoVersion.project_id == project_id)
-    if version:
-        video_rec = query.filter(VideoVersion.version_number == version).first()
+
+    v_int = None
+    if version is not None:
+        try:
+            clean_v = str(version).split("?")[0].split("&")[0].strip()
+            if clean_v.isdigit():
+                v_int = int(clean_v)
+        except Exception:
+            v_int = None
+
+    if v_int is not None:
+        video_rec = query.filter(VideoVersion.version_number == v_int).first()
     else:
         video_rec = query.order_by(VideoVersion.version_number.desc()).first()
 
