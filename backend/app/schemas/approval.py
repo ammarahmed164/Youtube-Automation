@@ -35,3 +35,4 @@ class VideoApprovalResponse(BaseModel):
     revocation_reason: Optional[str] = None
 
     model_config = {"from_attributes": True}
+

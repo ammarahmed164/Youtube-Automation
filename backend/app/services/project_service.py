@@ -1,5 +1,5 @@
 from typing import List, Optional
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from app.models.project import Project, ProjectSetting, ProjectActivity
 from app.schemas.project import ProjectCreate, ProjectUpdate
 
@@ -48,11 +48,23 @@ class ProjectService:
 
     @staticmethod
     def get_projects(db: Session, skip: int = 0, limit: int = 100) -> List[Project]:
-        return db.query(Project).order_by(Project.created_at.desc()).offset(skip).limit(limit).all()
+        return (
+            db.query(Project)
+            .options(joinedload(Project.settings))
+            .order_by(Project.created_at.desc())
+            .offset(skip)
+            .limit(limit)
+            .all()
+        )
 
     @staticmethod
     def get_project_by_id(db: Session, project_id: str) -> Optional[Project]:
-        return db.query(Project).filter(Project.id == project_id).first()
+        return (
+            db.query(Project)
+            .options(joinedload(Project.settings))
+            .filter(Project.id == project_id)
+            .first()
+        )
 
     @staticmethod
     def update_project(db: Session, project_id: str, update_in: ProjectUpdate) -> Optional[Project]:

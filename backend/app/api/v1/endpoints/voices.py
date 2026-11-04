@@ -46,6 +46,7 @@ def get_scene_audio(scene_id: str, db: Session = Depends(get_db)):
     return FileResponse(
         path=str(file_path),
         media_type="audio/wav",
-        filename=f"{scene_id}.wav"
+        filename=f"{scene_id}.wav",
+        headers={"Cache-Control": "public, max-age=86400"}
     )
 

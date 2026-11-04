@@ -53,7 +53,8 @@ def get_scene_visual(scene_id: str, db: Session = Depends(get_db)):
     return FileResponse(
         path=str(file_path),
         media_type=media_type,
-        filename=Path(asset.file_path).name
+        filename=Path(asset.file_path).name,
+        headers={"Cache-Control": "public, max-age=86400"}
     )
 
 @router.post("/scenes/{scene_id}/upload-asset", status_code=status.HTTP_200_OK)

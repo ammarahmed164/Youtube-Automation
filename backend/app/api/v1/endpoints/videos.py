@@ -119,7 +119,11 @@ def stream_project_video(
     return FileResponse(
         path=str(video_file),
         media_type="video/mp4",
-        filename=Path(video_rec.file_path).name
+        filename=Path(video_rec.file_path).name,
+        headers={
+            "Accept-Ranges": "bytes",
+            "Cache-Control": "public, max-age=3600"
+        }
     )
 
 @router.get("/{project_id}/subtitles")

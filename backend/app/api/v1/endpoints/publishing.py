@@ -162,3 +162,4 @@ def get_publish_status(
         query = query.filter(YouTubeUpload.video_version_id == video_version_id)
     latest_upload = query.order_by(YouTubeUpload.created_at.desc()).first()
     return latest_upload
+

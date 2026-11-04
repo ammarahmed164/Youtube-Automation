@@ -139,60 +139,79 @@ function WorkspaceContent() {
 
     async function loadData() {
       try {
-        const proj = await fetchProjectById(projectId);
-        setProject(proj);
-        const sc = await fetchScript(projectId);
-        if (sc) {
+        // High-Performance Parallel Burst: Load all project metadata, scripts, versions, QC, and approvals simultaneously
+        const [
+          projResult,
+          scriptResult,
+          versionsResult,
+          qcResult,
+          statusResult,
+          approvalResult,
+          pubStatusResult,
+        ] = await Promise.allSettled([
+          fetchProjectById(projectId),
+          fetchScript(projectId),
+          fetchVideoVersions(projectId),
+          fetchQualityCheck(projectId),
+          fetchRenderStatus(projectId),
+          fetchVideoApproval(projectId),
+          fetchPublishStatus(projectId),
+        ]);
+
+        let loadedProj: Project | null = null;
+        if (projResult.status === "fulfilled" && projResult.value) {
+          loadedProj = projResult.value;
+          setProject(loadedProj);
+        }
+
+        if (scriptResult.status === "fulfilled" && scriptResult.value) {
+          const sc = scriptResult.value;
           setScript(sc);
           setEditableScript(sc.full_script);
           setEditableHook(sc.title_hook || "");
           setEditableConclusion(sc.conclusion || "");
         }
 
-        // Load video rendering data if exists
-        try {
-          const versions = await fetchVideoVersions(projectId);
+        if (versionsResult.status === "fulfilled" && versionsResult.value) {
+          const versions = versionsResult.value;
           setVideoVersions(versions);
-          if (versions && versions.length > 0) {
+          if (versions.length > 0) {
             setLatestVideo(versions[0]);
             setSelectedVersionNum(versions[0].version_number);
           }
+        }
 
-          const qc = await fetchQualityCheck(projectId);
-          if (qc) setQualityCheck(qc);
+        if (qcResult.status === "fulfilled" && qcResult.value) {
+          setQualityCheck(qcResult.value);
+        }
 
-          const status = await fetchRenderStatus(projectId);
-          if (status && (status.status === "queued" || status.status === "running")) {
+        if (statusResult.status === "fulfilled" && statusResult.value) {
+          const status = statusResult.value;
+          if (status.status === "queued" || status.status === "running") {
             setIsRendering(true);
             setRenderProgress(status.progress_percent || 0);
             if (status.log_messages) setRenderLogs(status.log_messages);
           }
+        }
 
-          // Load Phase 8 approval and publish status
-          try {
-            const approval = await fetchVideoApproval(projectId);
-            if (approval) {
-              setActiveApproval(approval);
-              if (approval.upload_settings) {
-                setUploadTitle(approval.upload_settings.title || "");
-                setUploadDescription(approval.upload_settings.description || "");
-                setUploadTags(approval.upload_settings.tags?.join(", ") || "");
-                setUploadPrivacy(approval.upload_settings.privacy_status || "unlisted");
-                setUploadCategory(approval.upload_settings.category_id || "28");
-              }
-            } else if (proj) {
-              setUploadTitle(proj.title);
-              setUploadDescription(`${proj.topic}\n\nProduced with AI YouTube Documentary Studio.`);
-              setUploadTags("Documentary, Science, Space, Astronomy, AI");
-            }
-
-            const pubStatus = await fetchPublishStatus(projectId);
-            if (pubStatus) setPublishRecord(pubStatus);
-          } catch {
-            // No approval/publish record yet
+        if (approvalResult.status === "fulfilled" && approvalResult.value) {
+          const approval = approvalResult.value;
+          setActiveApproval(approval);
+          if (approval.upload_settings) {
+            setUploadTitle(approval.upload_settings.title || "");
+            setUploadDescription(approval.upload_settings.description || "");
+            setUploadTags(approval.upload_settings.tags?.join(", ") || "");
+            setUploadPrivacy(approval.upload_settings.privacy_status || "unlisted");
+            setUploadCategory(approval.upload_settings.category_id || "28");
           }
-        } catch {
-          // No video rendered yet
+        } else if (loadedProj) {
+          setUploadTitle(loadedProj.title);
+          setUploadDescription(`${loadedProj.topic}\n\nProduced with AI YouTube Documentary Studio.`);
+          setUploadTags("Documentary, Science, Space, Astronomy, AI");
+        }
+
+        if (pubStatusResult.status === "fulfilled" && pubStatusResult.value) {
+          setPublishRecord(pubStatusResult.value);
         }
       } catch (err: any) {
         setError(err.message || "Failed to load project workspace");
@@ -834,6 +853,7 @@ function WorkspaceContent() {
                               <img
                                 src={`${getSceneVisualUrl(scene.id)}?t=${assetTimestamp}`}
                                 alt={scene.scene_title || "Visual Preview"}
+                                loading="lazy"
                                 className="w-full h-full object-cover transition-transform group-hover:scale-105 duration-300"
                                 onError={(e) => {
                                   (e.target as HTMLImageElement).src =
@@ -1163,6 +1183,7 @@ function WorkspaceContent() {
                     <div className="relative rounded-2xl overflow-hidden border border-slate-800 bg-black shadow-2xl">
                       <video
                         controls
+                        preload="metadata"
                         key={`${selectedVersionNum || latestVideo.version_number}-${videoTimestamp}`}
                         className="w-full aspect-video"
                         poster={script?.scenes[0]?.id ? `${getSceneVisualUrl(script.scenes[0].id)}?t=${assetTimestamp}` : undefined}

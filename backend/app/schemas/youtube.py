@@ -36,3 +36,4 @@ class YouTubeAuthUrlResponse(BaseModel):
     redirect_uri: str
     configured: bool
     message: str
+

@@ -1,5 +1,5 @@
 from typing import Optional
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 from app.models.project import Project, ProjectActivity
 from app.models.generation import ScriptRevision, Scene
 from app.schemas.script import DocumentaryScriptPlan, ScriptUpdateInput
@@ -95,6 +95,10 @@ class ScriptService:
     def get_latest_script(db: Session, project_id: str) -> Optional[ScriptRevision]:
         return (
             db.query(ScriptRevision)
+            .options(
+                selectinload(ScriptRevision.scenes).selectinload(Scene.assets),
+                selectinload(ScriptRevision.scenes).selectinload(Scene.audio),
+            )
             .filter(ScriptRevision.project_id == project_id)
             .order_by(ScriptRevision.revision_number.desc())
             .first()
