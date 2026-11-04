@@ -51,7 +51,13 @@ import {
   updateScript,
   updateScene,
   deleteScene,
+  createScene,
+  aiRewriteScene,
   generateProjectVoice,
+  generateSceneVoice,
+  fetchVoices,
+  getVoicePreviewUrl,
+  VoiceOption,
   generateProjectVisuals,
   uploadSceneAsset,
   resetSceneVisual,
@@ -131,6 +137,30 @@ function WorkspaceContent() {
   const [deletingSceneId, setDeletingSceneId] = useState<string | null>(null);
   const [videoPlayerError, setVideoPlayerError] = useState<string | null>(null);
 
+  // Studio Voice Selection states
+  const [availableVoices, setAvailableVoices] = useState<VoiceOption[]>([]);
+  const [selectedVoiceId, setSelectedVoiceId] = useState<string>("");
+  const [isPlayingPreview, setIsPlayingPreview] = useState(false);
+  const [previewAudioObj, setPreviewAudioObj] = useState<HTMLAudioElement | null>(null);
+  const [generatingSceneVoiceId, setGeneratingSceneVoiceId] = useState<string | null>(null);
+
+  // Add Scene Modal & Creation states
+  const [showAddSceneModal, setShowAddSceneModal] = useState(false);
+  const [addSceneMode, setAddSceneMode] = useState<"ai" | "manual">("ai");
+  const [newSceneAiPrompt, setNewSceneAiPrompt] = useState("");
+  const [newSceneTitle, setNewSceneTitle] = useState("");
+  const [newSceneNarration, setNewSceneNarration] = useState("");
+  const [newSceneVisualDesc, setNewSceneVisualDesc] = useState("");
+  const [newSceneVisualType, setNewSceneVisualType] = useState("stock_footage");
+  const [newSceneKeywords, setNewSceneKeywords] = useState("");
+  const [newSceneInsertAfter, setNewSceneInsertAfter] = useState<number | null>(null);
+  const [addingScene, setAddingScene] = useState(false);
+
+  // AI Script Rewrite states
+  const [rewriteModalScene, setRewriteModalScene] = useState<any | null>(null);
+  const [rewriteInstructions, setRewriteInstructions] = useState("");
+  const [isRewriting, setIsRewriting] = useState(false);
+
   // Phase 6 Video Rendering states
   const [isRendering, setIsRendering] = useState(false);
   const [renderProgress, setRenderProgress] = useState(0);
@@ -168,7 +198,7 @@ function WorkspaceContent() {
 
     async function loadData() {
       try {
-        // High-Performance Parallel Burst: Load all project metadata, scripts, versions, QC, and approvals simultaneously
+        // High-Performance Parallel Burst: Load all project metadata, scripts, versions, QC, voices, and approvals simultaneously
         const [
           projResult,
           scriptResult,
@@ -177,6 +207,7 @@ function WorkspaceContent() {
           statusResult,
           approvalResult,
           pubStatusResult,
+          voicesResult,
         ] = await Promise.allSettled([
           fetchProjectById(projectId),
           fetchScript(projectId),
@@ -185,12 +216,28 @@ function WorkspaceContent() {
           fetchRenderStatus(projectId),
           fetchVideoApproval(projectId),
           fetchPublishStatus(projectId),
+          fetchVoices(),
         ]);
 
         let loadedProj: Project | null = null;
         if (projResult.status === "fulfilled" && projResult.value) {
           loadedProj = projResult.value;
           setProject(loadedProj);
+        }
+
+        if (voicesResult.status === "fulfilled" && voicesResult.value) {
+          const vList = voicesResult.value;
+          setAvailableVoices(vList);
+          if (loadedProj?.settings?.narration_preset) {
+            setSelectedVoiceId(loadedProj.settings.narration_preset);
+          } else {
+            const lang = (loadedProj?.settings?.language || "").toLowerCase();
+            if (lang === "urdu") setSelectedVoiceId("ur-PK-AsadNeural");
+            else if (lang === "hindi") setSelectedVoiceId("hi-IN-MadhurNeural");
+            else if (lang === "arabic") setSelectedVoiceId("ar-SA-HamedNeural");
+            else if (lang === "spanish") setSelectedVoiceId("es-ES-AlvaroNeural");
+            else setSelectedVoiceId("en-US-ChristopherNeural");
+          }
         }
 
         if (scriptResult.status === "fulfilled" && scriptResult.value) {
@@ -346,19 +393,111 @@ function WorkspaceContent() {
     }
   };
 
+  const handlePlayVoicePreview = (voiceId: string) => {
+    if (previewAudioObj) {
+      previewAudioObj.pause();
+    }
+    const audioUrl = getVoicePreviewUrl(voiceId);
+    const audio = new Audio(audioUrl);
+    setPreviewAudioObj(audio);
+    setIsPlayingPreview(true);
+    audio.play().catch((e) => console.error("Audio preview failed:", e));
+    audio.onended = () => setIsPlayingPreview(false);
+    audio.onerror = () => setIsPlayingPreview(false);
+  };
+
   const handleGenerateVoice = async () => {
     setGeneratingVoice(true);
     setError(null);
     try {
-      await generateProjectVoice(projectId);
+      const voiceToUse = selectedVoiceId || undefined;
+      await generateProjectVoice(projectId, voiceToUse);
       const sc = await fetchScript(projectId);
       if (sc) setScript(sc);
+      const proj = await fetchProjectById(projectId);
+      if (proj) setProject(proj);
       setAssetTimestamp(Date.now());
       alert("Neural voiceover synthesized successfully for all scenes!");
     } catch (err: any) {
       setError(err.message || "Failed to generate voiceover.");
     } finally {
       setGeneratingVoice(false);
+    }
+  };
+
+  const handleGenerateSceneVoice = async (sceneId: string) => {
+    setGeneratingSceneVoiceId(sceneId);
+    try {
+      await generateSceneVoice(sceneId, selectedVoiceId || undefined);
+      const sc = await fetchScript(projectId);
+      if (sc) setScript(sc);
+      setAssetTimestamp(Date.now());
+    } catch (err: any) {
+      alert(err.message || "Failed to synthesize voice for this scene.");
+    } finally {
+      setGeneratingSceneVoiceId(null);
+    }
+  };
+
+  const handleCreateScene = async () => {
+    setAddingScene(true);
+    try {
+      if (addSceneMode === "manual" && !newSceneNarration.trim()) {
+        alert("Please provide narration text for the scene.");
+        setAddingScene(false);
+        return;
+      }
+
+      await createScene(projectId, {
+        generate_with_ai: addSceneMode === "ai",
+        ai_prompt: addSceneMode === "ai" ? newSceneAiPrompt.trim() || undefined : undefined,
+        insert_after_order: newSceneInsertAfter !== null ? Number(newSceneInsertAfter) : undefined,
+        scene_title: newSceneTitle.trim() || undefined,
+        narration_text: addSceneMode === "manual" ? newSceneNarration.trim() : undefined,
+        visual_description: newSceneVisualDesc.trim() || undefined,
+        preferred_visual_type: newSceneVisualType,
+        stock_keywords: newSceneKeywords
+          ? newSceneKeywords.split(",").map((k) => k.trim()).filter(Boolean)
+          : undefined,
+      });
+
+      const sc = await fetchScript(projectId);
+      if (sc) setScript(sc);
+      const proj = await fetchProjectById(projectId);
+      if (proj) setProject(proj);
+      setAssetTimestamp(Date.now());
+
+      // Reset Modal Form
+      setShowAddSceneModal(false);
+      setNewSceneAiPrompt("");
+      setNewSceneTitle("");
+      setNewSceneNarration("");
+      setNewSceneVisualDesc("");
+      setNewSceneKeywords("");
+      setNewSceneInsertAfter(null);
+      alert("New scene successfully added to the documentary!");
+    } catch (err: any) {
+      alert(err.message || "Failed to add new scene.");
+    } finally {
+      setAddingScene(false);
+    }
+  };
+
+  const handleAiRewriteScene = async () => {
+    if (!rewriteModalScene) return;
+    setIsRewriting(true);
+    try {
+      await aiRewriteScene(rewriteModalScene.id, rewriteInstructions.trim() || undefined);
+      const sc = await fetchScript(projectId);
+      if (sc) setScript(sc);
+      setAssetTimestamp(Date.now());
+      setRewriteModalScene(null);
+      setRewriteInstructions("");
+      alert("Scene script enhanced with AI successfully!");
+    } catch (err: any) {
+      alert(err.message || "Failed to rewrite scene script with AI.");
+    } finally {
+      setIsRewriting(false);
     }
   };
 
@@ -890,7 +1029,7 @@ function WorkspaceContent() {
             {activeTab === "scenes" && (
               <div className="space-y-6">
                 {/* Phase 5 Action Bar: Voiceover & Visual Engine */}
-                <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-slate-900 via-indigo-950/40 to-slate-900 border border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-sm">
+                <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-slate-900 via-indigo-950/40 to-slate-900 border border-slate-800 flex flex-col xl:flex-row xl:items-center justify-between gap-4 shadow-sm">
                   <div className="space-y-1.5">
                     <div className="flex items-center gap-2">
                       <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 uppercase tracking-wider">
@@ -905,6 +1044,34 @@ function WorkspaceContent() {
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2.5">
+                    {/* Studio Voice Selector & Audio Preview */}
+                    <div className="flex items-center gap-1.5 p-1 rounded-xl bg-slate-950/90 border border-slate-800">
+                      <div className="flex items-center gap-1.5 px-2 text-xs text-slate-300">
+                        <Mic className="w-3.5 h-3.5 text-indigo-400" />
+                        <span className="font-semibold hidden sm:inline">Voice:</span>
+                      </div>
+                      <select
+                        value={selectedVoiceId}
+                        onChange={(e) => setSelectedVoiceId(e.target.value)}
+                        className="bg-slate-900 border border-slate-700 text-xs text-white rounded-lg px-2 py-1.5 focus:outline-none focus:border-indigo-500 max-w-[190px] truncate"
+                      >
+                        {availableVoices.map((v) => (
+                          <option key={v.id} value={v.id}>
+                            {v.name} ({v.language} - {v.gender})
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => handlePlayVoicePreview(selectedVoiceId)}
+                        disabled={isPlayingPreview || !selectedVoiceId}
+                        className="p-1.5 rounded-lg bg-indigo-950 hover:bg-indigo-900 text-indigo-300 hover:text-white border border-indigo-800/40 transition-colors"
+                        title="Listen to 2-second studio sample"
+                      >
+                        <Volume2 className={`w-3.5 h-3.5 ${isPlayingPreview ? "animate-pulse text-emerald-400" : ""}`} />
+                      </button>
+                    </div>
+
                     <button
                       onClick={handleGenerateVoice}
                       disabled={generatingVoice}
@@ -932,6 +1099,26 @@ function WorkspaceContent() {
                       <span>{isRendering ? "Rendering Video..." : "Render Video (FFmpeg)"}</span>
                     </button>
                   </div>
+                </div>
+
+                {/* Scene Controls & Add Scene Header */}
+                <div className="flex items-center justify-between pb-1">
+                  <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-2">
+                    <Layers className="w-3.5 h-3.5 text-indigo-400" />
+                    <span>Documentary Scenes Breakdown ({script.scenes.length})</span>
+                  </h3>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNewSceneInsertAfter(null);
+                      setShowAddSceneModal(true);
+                    }}
+                    className="flex items-center gap-1.5 text-xs font-semibold px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white transition-all shadow-md shadow-emerald-950/40"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>+ Add New Scene</span>
+                  </button>
                 </div>
 
                 {/* Scene Cards */}
@@ -969,8 +1156,30 @@ function WorkspaceContent() {
                               </span>
                             </div>
 
-                            {/* Scene Action Buttons: Edit & Delete */}
+                            {/* Scene Action Buttons: AI Rewrite, Voice, Edit & Delete */}
                             <div className="flex items-center gap-1.5 pl-2 border-l border-slate-800">
+                              <button
+                                type="button"
+                                title="Enhance or rewrite this scene's narration with Gemini AI"
+                                onClick={() => {
+                                  setRewriteModalScene(scene);
+                                  setRewriteInstructions("");
+                                }}
+                                className="p-1.5 rounded-lg bg-slate-900 hover:bg-purple-950/50 text-slate-400 hover:text-purple-300 border border-slate-800 hover:border-purple-800/40 transition-colors"
+                              >
+                                <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+                              </button>
+
+                              <button
+                                type="button"
+                                title="Synthesize or regenerate voice for this scene"
+                                disabled={generatingSceneVoiceId === scene.id}
+                                onClick={() => handleGenerateSceneVoice(scene.id)}
+                                className="p-1.5 rounded-lg bg-slate-900 hover:bg-indigo-950/50 text-slate-400 hover:text-indigo-300 border border-slate-800 hover:border-indigo-800/40 transition-colors disabled:opacity-40"
+                              >
+                                <Mic className={`w-3.5 h-3.5 ${generatingSceneVoiceId === scene.id ? "animate-spin text-indigo-400" : "text-indigo-400"}`} />
+                              </button>
+
                               <button
                                 type="button"
                                 title="Edit scene title, narration script, or visual style"
@@ -1398,6 +1607,21 @@ function WorkspaceContent() {
                       </div>
                     );
                   })}
+                </div>
+
+                {/* Bottom Add Scene Trigger */}
+                <div className="pt-2 flex justify-center">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNewSceneInsertAfter(null);
+                      setShowAddSceneModal(true);
+                    }}
+                    className="flex items-center gap-2 px-5 py-3 rounded-2xl bg-slate-900/80 hover:bg-slate-850 text-emerald-400 hover:text-emerald-300 border border-dashed border-emerald-500/30 hover:border-emerald-500/60 text-xs font-semibold transition-all shadow-sm"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>+ Add Another Scene to Documentary</span>
+                  </button>
                 </div>
               </div>
             )}
@@ -2182,6 +2406,323 @@ function WorkspaceContent() {
           <span className="font-semibold text-slate-200">Strict Human Approval Guarantee:</span> When video rendering is complete in Phase 6, you will be able to watch the entire MP4, request AI revisions in Phase 7, and explicitly approve the exact final version in Phase 8 before any YouTube upload can be authorized.
         </div>
       </div>
+
+      {/* Modal 1: + Add New Scene Modal */}
+      {showAddSceneModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="w-full max-w-xl rounded-2xl bg-slate-950 border border-slate-800 p-6 space-y-5 shadow-2xl overflow-y-auto max-h-[90vh]">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center">
+                  <Plus className="w-4 h-4" />
+                </div>
+                <h3 className="font-bold text-base text-white">Add New Scene to Documentary</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAddSceneModal(false)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-900 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Mode Switcher Tabs */}
+            <div className="grid grid-cols-2 gap-2 p-1 rounded-xl bg-slate-900 border border-slate-800 text-xs font-semibold">
+              <button
+                type="button"
+                onClick={() => setAddSceneMode("ai")}
+                className={`flex items-center justify-center gap-2 py-2 rounded-lg transition-all ${
+                  addSceneMode === "ai"
+                    ? "bg-purple-600 text-white shadow-sm font-bold"
+                    : "text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>Write with AI (AI se likhwayen)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setAddSceneMode("manual")}
+                className={`flex items-center justify-center gap-2 py-2 rounded-lg transition-all ${
+                  addSceneMode === "manual"
+                    ? "bg-emerald-600 text-white shadow-sm font-bold"
+                    : "text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                <Edit3 className="w-3.5 h-3.5" />
+                <span>Manual Script (Khod likhein)</span>
+              </button>
+            </div>
+
+            {/* Form Fields */}
+            <div className="space-y-4 text-xs">
+              {/* Common: Position selector */}
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-400 mb-1">
+                  Insert Scene Position:
+                </label>
+                <select
+                  value={newSceneInsertAfter === null ? "end" : newSceneInsertAfter.toString()}
+                  onChange={(e) =>
+                    setNewSceneInsertAfter(e.target.value === "end" ? null : parseInt(e.target.value, 10))
+                  }
+                  className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-white focus:outline-none focus:border-indigo-500"
+                >
+                  <option value="end">At the end of documentary (Scene #{script?.scenes ? script.scenes.length + 1 : 1})</option>
+                  {script?.scenes.map((s) => (
+                    <option key={s.id} value={s.scene_order}>
+                      After Scene #{s.scene_order}: {s.scene_title || s.scene_id_str}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Mode A: Write with AI */}
+              {addSceneMode === "ai" ? (
+                <div className="space-y-3.5 p-4 rounded-xl bg-purple-950/20 border border-purple-500/20">
+                  <div className="flex items-center gap-2 text-purple-300 font-semibold text-[11px]">
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>Gemini AI will write narration matching {project?.settings?.language || "Documentary"} language & tone.</span>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-300 mb-1">
+                      Scene Topic or Direction (Optional):
+                    </label>
+                    <textarea
+                      rows={3}
+                      value={newSceneAiPrompt}
+                      onChange={(e) => setNewSceneAiPrompt(e.target.value)}
+                      placeholder="e.g. Write about the 1965 Tashkent declaration and its diplomatic consequences, or leave empty to naturally continue the story."
+                      className="w-full p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-white text-xs placeholder:text-slate-600 focus:outline-none focus:border-purple-500"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-400 mb-1">
+                        Optional Custom Title:
+                      </label>
+                      <input
+                        type="text"
+                        value={newSceneTitle}
+                        onChange={(e) => setNewSceneTitle(e.target.value)}
+                        placeholder="Leave blank for AI title"
+                        className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-white text-xs placeholder:text-slate-600 focus:outline-none focus:border-purple-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-400 mb-1">
+                        Visual Style:
+                      </label>
+                      <select
+                        value={newSceneVisualType}
+                        onChange={(e) => setNewSceneVisualType(e.target.value)}
+                        className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-white text-xs focus:outline-none focus:border-purple-500"
+                      >
+                        <option value="archival_photograph">Archival Photograph</option>
+                        <option value="stock_footage">Stock Footage</option>
+                        <option value="ai_image">AI Image</option>
+                        <option value="cinematic_concept">Cinematic Concept</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                /* Mode B: Manual Script Input */
+                <div className="space-y-3.5 p-4 rounded-xl bg-slate-900/40 border border-slate-800">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-300 mb-1">
+                      Scene Title:
+                    </label>
+                    <input
+                      type="text"
+                      value={newSceneTitle}
+                      onChange={(e) => setNewSceneTitle(e.target.value)}
+                      placeholder="e.g. The Turning Point"
+                      className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-white text-xs placeholder:text-slate-600 focus:outline-none focus:border-emerald-500"
+                    />
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-[11px] font-semibold text-slate-300">
+                        Voiceover Narration Script: <span className="text-rose-400">*</span>
+                      </label>
+                      <span className="text-[10px] text-slate-400 font-mono">
+                        Language: {project?.settings?.language || "English"}
+                      </span>
+                    </div>
+                    <textarea
+                      rows={4}
+                      value={newSceneNarration}
+                      onChange={(e) => setNewSceneNarration(e.target.value)}
+                      placeholder={`Enter the voiceover script in ${project?.settings?.language || "your preferred language"}...`}
+                      className="w-full p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-white text-xs placeholder:text-slate-600 focus:outline-none focus:border-emerald-500 leading-relaxed font-sans"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-400 mb-1">
+                      Visual Direction / What Should Appear on Screen:
+                    </label>
+                    <textarea
+                      rows={2}
+                      value={newSceneVisualDesc}
+                      onChange={(e) => setNewSceneVisualDesc(e.target.value)}
+                      placeholder="e.g. Historical black-and-white footage of leaders signing documents at the summit table."
+                      className="w-full p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-white text-xs placeholder:text-slate-600 focus:outline-none focus:border-emerald-500"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-400 mb-1">
+                        Preferred Visual Type:
+                      </label>
+                      <select
+                        value={newSceneVisualType}
+                        onChange={(e) => setNewSceneVisualType(e.target.value)}
+                        className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-white text-xs focus:outline-none focus:border-emerald-500"
+                      >
+                        <option value="archival_photograph">Archival Photograph</option>
+                        <option value="stock_footage">Stock Footage</option>
+                        <option value="ai_image">AI Image</option>
+                        <option value="user_upload">Creator Custom Upload</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-400 mb-1">
+                        Stock Search Keywords:
+                      </label>
+                      <input
+                        type="text"
+                        value={newSceneKeywords}
+                        onChange={(e) => setNewSceneKeywords(e.target.value)}
+                        placeholder="e.g. diplomacy, treaty, leaders"
+                        className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-white text-xs placeholder:text-slate-600 focus:outline-none focus:border-emerald-500"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Actions */}
+            <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setShowAddSceneModal(false)}
+                className="px-4 py-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-900 text-xs transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={addingScene || (addSceneMode === "manual" && !newSceneNarration.trim())}
+                onClick={handleCreateScene}
+                className={`flex items-center gap-2 px-5 py-2 rounded-xl text-white text-xs font-semibold shadow-md transition-all disabled:opacity-50 ${
+                  addSceneMode === "ai"
+                    ? "bg-purple-600 hover:bg-purple-500 shadow-purple-950/40"
+                    : "bg-emerald-600 hover:bg-emerald-500 shadow-emerald-950/40"
+                }`}
+              >
+                {addSceneMode === "ai" ? (
+                  <Sparkles className={`w-3.5 h-3.5 ${addingScene ? "animate-spin" : ""}`} />
+                ) : (
+                  <Plus className={`w-3.5 h-3.5 ${addingScene ? "animate-spin" : ""}`} />
+                )}
+                <span>
+                  {addingScene
+                    ? addSceneMode === "ai"
+                      ? "Generating Scene with AI..."
+                      : "Adding Scene..."
+                    : addSceneMode === "ai"
+                    ? "Generate Scene with AI"
+                    : "Add Scene to Documentary"}
+                </span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal 2: ✨ AI Script Rewrite Modal */}
+      {rewriteModalScene && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="w-full max-w-lg rounded-2xl bg-slate-950 border border-purple-500/30 p-6 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-lg bg-purple-500/20 text-purple-400 flex items-center justify-center">
+                  <Sparkles className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-sm text-white">
+                    AI Script Rewrite &bull; Scene #{rewriteModalScene.scene_order}
+                  </h3>
+                  <span className="text-[11px] text-slate-400">
+                    {rewriteModalScene.scene_title || rewriteModalScene.scene_id_str}
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setRewriteModalScene(null)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-900 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div>
+                <span className="block text-[11px] font-semibold text-slate-400 mb-1">
+                  Current Narration Text:
+                </span>
+                <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 text-slate-300 leading-relaxed font-sans max-h-32 overflow-y-auto">
+                  {rewriteModalScene.narration_text}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-purple-300 mb-1 flex items-center justify-between">
+                  <span>How should Gemini improve or rewrite this scene?</span>
+                  <span className="text-[10px] text-slate-500 font-normal">Optional</span>
+                </label>
+                <textarea
+                  rows={3}
+                  value={rewriteInstructions}
+                  onChange={(e) => setRewriteInstructions(e.target.value)}
+                  placeholder="e.g. Make it more intense and dramatic, explain the treaty terms in deeper detail, or polish Urdu/Hindi phrasing. Leave empty for automatic cinematic enhancement."
+                  className="w-full p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-white placeholder:text-slate-600 focus:outline-none focus:border-purple-500 text-xs"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setRewriteModalScene(null)}
+                className="px-4 py-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-900 text-xs transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isRewriting}
+                onClick={handleAiRewriteScene}
+                className="flex items-center gap-2 px-5 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold shadow-md shadow-purple-950/40 transition-all disabled:opacity-50"
+              >
+                <Sparkles className={`w-3.5 h-3.5 ${isRewriting ? "animate-spin" : ""}`} />
+                <span>{isRewriting ? "Rewriting with Gemini AI..." : "Enhance with Gemini AI"}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

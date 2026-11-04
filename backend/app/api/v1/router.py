@@ -4,10 +4,11 @@ from app.api.v1.endpoints import health, projects, scripts, voices, visuals, vid
 api_router = APIRouter()
 
 api_router.include_router(health.router, tags=["Health"])
-api_router.include_router(projects.router, prefix="/projects", tags=["Projects"])
-api_router.include_router(scripts.router, prefix="/projects", tags=["Scripts"])
+# Specific sub-path routers registered before parameterized projects router to prevent /{project_id} shadowing
 api_router.include_router(voices.router, prefix="/projects", tags=["Voice Agent"])
+api_router.include_router(scripts.router, prefix="/projects", tags=["Scripts"])
 api_router.include_router(visuals.router, prefix="/projects", tags=["Visual Asset Engine"])
 api_router.include_router(videos.router, prefix="/projects", tags=["Video Rendering Engine"])
 api_router.include_router(qc.router, prefix="/projects", tags=["Quality Control & AI Modification"])
+api_router.include_router(projects.router, prefix="/projects", tags=["Projects"])
 api_router.include_router(publishing.router, prefix="/publishing", tags=["Human Approval Gate & YouTube Publishing"])

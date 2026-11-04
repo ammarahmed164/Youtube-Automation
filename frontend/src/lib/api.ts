@@ -94,13 +94,53 @@ export async function updateScript(
 }
 
 // Voiceover Narration APIs
-export async function generateProjectVoice(projectId: string): Promise<any> {
-  const res = await fetch(`${API_BASE_URL}/projects/${projectId}/generate-voice`, {
+export interface VoiceOption {
+  id: string;
+  name: string;
+  language: string;
+  locale: string;
+  gender: "male" | "female";
+  tone: string;
+  preview_text: string;
+}
+
+export async function fetchVoices(language?: string): Promise<VoiceOption[]> {
+  const url = language
+    ? `${API_BASE_URL}/projects/voices?language=${encodeURIComponent(language)}`
+    : `${API_BASE_URL}/projects/voices`;
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Failed to fetch voices: HTTP ${res.status}`);
+  return res.json();
+}
+
+export function getVoicePreviewUrl(voiceId: string): string {
+  return `${API_BASE_URL}/projects/voices/preview/${encodeURIComponent(voiceId)}`;
+}
+
+export async function generateProjectVoice(projectId: string, voicePreset?: string): Promise<any> {
+  const url = voicePreset
+    ? `${API_BASE_URL}/projects/${projectId}/generate-voice?voice_preset=${encodeURIComponent(voicePreset)}`
+    : `${API_BASE_URL}/projects/${projectId}/generate-voice`;
+  const res = await fetch(url, {
     method: "POST",
   });
   if (!res.ok) {
     const err = await res.json().catch(() => null);
     throw new Error(err?.detail || `Voice generation failed: HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function generateSceneVoice(sceneId: string, voicePreset?: string): Promise<any> {
+  const url = voicePreset
+    ? `${API_BASE_URL}/projects/scenes/${sceneId}/generate-voice?voice_preset=${encodeURIComponent(voicePreset)}`
+    : `${API_BASE_URL}/projects/scenes/${sceneId}/generate-voice`;
+  const res = await fetch(url, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => null);
+    throw new Error(err?.detail || `Failed to generate scene voice: HTTP ${res.status}`);
   }
   return res.json();
 }
@@ -232,6 +272,47 @@ export async function deleteScene(sceneId: string): Promise<ScriptRevisionData> 
   if (!res.ok) {
     const err = await res.json().catch(() => null);
     throw new Error(err?.detail || `Failed to delete scene: HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function createScene(
+  projectId: string,
+  input: {
+    generate_with_ai?: boolean;
+    ai_prompt?: string;
+    insert_after_order?: number;
+    scene_title?: string;
+    purpose?: string;
+    narration_text?: string;
+    visual_description?: string;
+    preferred_visual_type?: string;
+    stock_keywords?: string[];
+    on_screen_text?: string;
+    transition_preference?: string;
+  }
+): Promise<any> {
+  const res = await fetch(`${API_BASE_URL}/projects/${projectId}/scenes`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => null);
+    throw new Error(err?.detail || `Failed to create scene: HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function aiRewriteScene(sceneId: string, instructions?: string): Promise<any> {
+  const res = await fetch(`${API_BASE_URL}/projects/scenes/${sceneId}/ai-rewrite`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ instructions: instructions || null }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => null);
+    throw new Error(err?.detail || `AI rewrite failed: HTTP ${res.status}`);
   }
   return res.json();
 }

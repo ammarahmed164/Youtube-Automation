@@ -1,7 +1,14 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from app.core.database import get_db
-from app.schemas.script import ScriptResponse, ScriptUpdateInput, SceneResponse, SceneUpdateInput
+from app.schemas.script import (
+    ScriptResponse,
+    ScriptUpdateInput,
+    SceneResponse,
+    SceneUpdateInput,
+    SceneCreateInput,
+    SceneAiRewriteInput,
+)
 from app.services.script_service import ScriptService
 
 router = APIRouter()
@@ -42,6 +49,33 @@ def update_script(project_id: str, update_in: ScriptUpdateInput, db: Session = D
         )
     return revision
 
+@router.post("/{project_id}/scenes", response_model=SceneResponse, status_code=status.HTTP_201_CREATED)
+async def create_scene(project_id: str, scene_in: SceneCreateInput, db: Session = Depends(get_db)):
+    """
+    Add a new scene to the documentary.
+    Can be AI-generated with Gemini or manually written by the user.
+    """
+    try:
+        new_scene = await ScriptService.create_scene(db=db, project_id=project_id, scene_in=scene_in)
+        return new_scene
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+@router.post("/scenes/{scene_id}/ai-rewrite", response_model=SceneResponse)
+async def ai_rewrite_scene(scene_id: str, rewrite_in: SceneAiRewriteInput, db: Session = Depends(get_db)):
+    """
+    Use Gemini AI to polish, rewrite, or enhance an individual scene's script and visual plan.
+    """
+    try:
+        updated_scene = await ScriptService.ai_rewrite_scene(db=db, scene_id=scene_id, rewrite_in=rewrite_in)
+        return updated_scene
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
 @router.patch("/scenes/{scene_id}", response_model=SceneResponse)
 def update_scene(scene_id: str, update_in: SceneUpdateInput, db: Session = Depends(get_db)):
     """Update scene metadata, narration script, title, or visual preference."""
@@ -63,4 +97,3 @@ def delete_scene(scene_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
-

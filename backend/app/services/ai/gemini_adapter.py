@@ -4,9 +4,18 @@ from typing import Dict, Any, List
 from google import genai
 from google.genai import types
 from app.core.config import settings
-from app.schemas.script import DocumentaryScriptPlan
+from app.schemas.script import DocumentaryScriptPlan, ScenePlanItem
 from app.schemas.modification import DocumentaryModificationPlan
 from app.services.ai.adapter import BaseAIService
+from pydantic import BaseModel, Field
+
+class SceneRewriteResult(BaseModel):
+    scene_title: str = Field(description="Enhanced scene title")
+    purpose: str = Field(description="Narrative objective")
+    narration_text: str = Field(description="Polished, powerful voiceover narration in the documentary language")
+    visual_description: str = Field(description="Cinematic visual direction for this scene")
+    stock_keywords: List[str] = Field(default_factory=list, description="2-4 search keywords")
+    on_screen_text: str = Field(default="", description="Key on-screen text or headline")
 
 logger = logging.getLogger(__name__)
 
@@ -209,6 +218,158 @@ Generate the targeted modification plan identifying exactly which scenes to upda
         raise RuntimeError(
             f"All Gemini API keys failed parsing modification request: {str(last_exception)}"
         )
+
+    async def generate_single_scene(
+        self,
+        topic: str,
+        language: str,
+        tone: str,
+        scene_number: int,
+        existing_scenes_summary: str,
+        user_prompt: str = None
+    ) -> ScenePlanItem:
+        """
+        Generates a single cohesive scene matching the documentary's topic, tone, and language.
+        Can be guided by optional creator prompt or automatically inferred from surrounding narrative.
+        """
+        if not self.is_configured():
+            raise ValueError("Gemini API key is not configured.")
+
+        system_instruction = f"""
+You are an award-winning YouTube Documentary Director and Senior Investigative Researcher.
+Your task is to write ONE cohesive, powerful documentary scene for this documentary.
+
+CRITICAL RULES:
+1. TRUTHFULNESS: Never invent facts. Keep historical/scientific narrative accurate and engaging.
+2. DURATION PACING: Aim for 30-50 seconds (~70-110 words) of spoken narration.
+3. LANGUAGE & SCRIPT: The narration MUST be written in {language}.
+4. TONE: Maintain a {tone} documentary tone.
+5. VISUAL DIRECTION: Provide realistic visual description and 2-4 English stock search keywords.
+6. Return strictly structured JSON matching ScenePlanItem.
+"""
+
+        prompt = f"""
+DOCUMENTARY TOPIC: {topic}
+LANGUAGE: {language}
+TONE: {tone}
+NEW SCENE NUMBER: {scene_number}
+
+PREVIOUS DOCUMENTARY CONTEXT:
+{existing_scenes_summary}
+
+CREATOR'S SPECIFIC INSTRUCTION FOR THIS SCENE:
+{user_prompt or "Create a compelling new scene that naturally expands and enriches the documentary narrative."}
+
+Generate the scene matching ScenePlanItem schema.
+"""
+
+        num_keys = len(self.keys)
+        last_exception = None
+
+        for attempt in range(num_keys):
+            key_idx = (GeminiService._current_key_index + attempt) % num_keys
+            current_key = self.keys[key_idx]
+
+            try:
+                client = self.get_client_for_key(current_key)
+                response = client.models.generate_content(
+                    model="gemini-2.5-flash",
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=system_instruction,
+                        response_mime_type="application/json",
+                        response_schema=ScenePlanItem,
+                        temperature=0.7,
+                    ),
+                )
+                result_json = json.loads(response.text)
+                scene_plan = ScenePlanItem.model_validate(result_json)
+                scene_plan.scene_order = scene_number
+                scene_plan.scene_id_str = f"scene_{scene_number:02d}"
+                GeminiService._current_key_index = key_idx
+                return scene_plan
+            except Exception as e:
+                logger.warning(f"Gemini API key {key_idx + 1} single scene generation error: {e}")
+                last_exception = e
+                if attempt < num_keys - 1:
+                    continue
+                else:
+                    break
+
+        raise RuntimeError(f"Failed to generate scene with Gemini AI: {str(last_exception)}")
+
+    async def rewrite_scene_narration(
+        self,
+        current_narration: str,
+        topic: str,
+        language: str,
+        tone: str,
+        instructions: str = None
+    ) -> SceneRewriteResult:
+        """
+        Rewrites or enhances an existing scene's voiceover narration and visual guidance with Gemini AI.
+        """
+        if not self.is_configured():
+            raise ValueError("Gemini API key is not configured.")
+
+        system_instruction = f"""
+You are a master YouTube Documentary Script Doctor and Visual Director.
+Your task is to refine, rewrite, and elevate a specific documentary scene.
+
+CRITICAL RULES:
+1. Polish the voiceover narration so it sounds natural, broadcast-grade, and engaging when spoken.
+2. The narration MUST be written in {language}.
+3. TONE: Maintain a {tone} documentary tone.
+4. Keep the length paced for voiceover (~30-55 seconds).
+5. Output strictly matching SceneRewriteResult JSON.
+"""
+
+        prompt = f"""
+DOCUMENTARY TOPIC: {topic}
+LANGUAGE: {language}
+TONE: {tone}
+
+CURRENT SCENE NARRATION:
+"{current_narration}"
+
+CREATOR'S REWRITE REQUEST:
+{instructions or "Improve and polish the narration text to make it more cinematic, authoritative, and emotionally engaging while maintaining strict factual accuracy."}
+
+Output refined scene matching SceneRewriteResult.
+"""
+
+        num_keys = len(self.keys)
+        last_exception = None
+
+        for attempt in range(num_keys):
+            key_idx = (GeminiService._current_key_index + attempt) % num_keys
+            current_key = self.keys[key_idx]
+
+            try:
+                client = self.get_client_for_key(current_key)
+                response = client.models.generate_content(
+                    model="gemini-2.5-flash",
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=system_instruction,
+                        response_mime_type="application/json",
+                        response_schema=SceneRewriteResult,
+                        temperature=0.7,
+                    ),
+                )
+                result_json = json.loads(response.text)
+                rewrite = SceneRewriteResult.model_validate(result_json)
+                GeminiService._current_key_index = key_idx
+                return rewrite
+            except Exception as e:
+                logger.warning(f"Gemini API key {key_idx + 1} scene rewrite error: {e}")
+                last_exception = e
+                if attempt < num_keys - 1:
+                    continue
+                else:
+                    break
+
+        raise RuntimeError(f"Failed to rewrite scene with Gemini AI: {str(last_exception)}")
 
     async def plan_scenes(self, script_text: str, target_duration_minutes: int) -> Dict[str, Any]:
         pass

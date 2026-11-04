@@ -88,3 +88,20 @@ class SceneUpdateInput(BaseModel):
     on_screen_text: Optional[str] = None
     transition_preference: Optional[str] = None
 
+class SceneCreateInput(BaseModel):
+    generate_with_ai: bool = False
+    ai_prompt: Optional[str] = Field(None, description="Optional topic or scene prompt for AI generation")
+    insert_after_order: Optional[int] = Field(None, description="Insert after scene order, None appends at end")
+    scene_title: Optional[str] = None
+    purpose: Optional[str] = None
+    narration_text: Optional[str] = None
+    visual_description: Optional[str] = None
+    preferred_visual_type: Optional[str] = "stock_footage"
+    stock_keywords: Optional[List[str]] = None
+    on_screen_text: Optional[str] = None
+    transition_preference: Optional[str] = "fade"
+
+class SceneAiRewriteInput(BaseModel):
+    instructions: Optional[str] = Field(None, description="Custom instruction to guide AI rewriting/enhancement")
+
+
