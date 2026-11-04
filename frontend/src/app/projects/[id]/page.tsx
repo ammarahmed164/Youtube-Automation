@@ -45,6 +45,7 @@ import {
 } from "lucide-react";
 import {
   fetchProjectById,
+  updateProject,
   deleteProject,
   generateScript,
   fetchScript,
@@ -160,6 +161,11 @@ function WorkspaceContent() {
   const [rewriteModalScene, setRewriteModalScene] = useState<any | null>(null);
   const [rewriteInstructions, setRewriteInstructions] = useState("");
   const [isRewriting, setIsRewriting] = useState(false);
+
+  // Custom Target Duration Editing states
+  const [showDurationModal, setShowDurationModal] = useState(false);
+  const [customProjectDuration, setCustomProjectDuration] = useState<number>(10);
+  const [savingDuration, setSavingDuration] = useState(false);
 
   // Phase 6 Video Rendering states
   const [isRendering, setIsRendering] = useState(false);
@@ -498,6 +504,26 @@ function WorkspaceContent() {
       alert(err.message || "Failed to rewrite scene script with AI.");
     } finally {
       setIsRewriting(false);
+    }
+  };
+
+  const handleSaveProjectDuration = async () => {
+    if (customProjectDuration < 1 || customProjectDuration > 20) {
+      alert("Target duration must be between 1 and 20 minutes.");
+      return;
+    }
+    setSavingDuration(true);
+    try {
+      const updated = await updateProject(projectId, {
+        settings: { target_duration_minutes: customProjectDuration },
+      });
+      setProject(updated);
+      setShowDurationModal(false);
+      alert(`Documentary target duration updated to ${customProjectDuration} minutes!`);
+    } catch (err: any) {
+      alert(err.message || "Failed to update target duration.");
+    } finally {
+      setSavingDuration(false);
     }
   };
 
@@ -860,9 +886,22 @@ function WorkspaceContent() {
         {/* Project Configuration Badges */}
         {s && (
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 pt-6 border-t border-slate-800/80 text-xs">
-            <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800">
-              <span className="text-slate-500 text-[11px] block">Duration</span>
-              <span className="font-semibold text-emerald-400 mt-0.5 block">{s.target_duration_minutes} Mins</span>
+            <div
+              onClick={() => {
+                setCustomProjectDuration(s.target_duration_minutes);
+                setShowDurationModal(true);
+              }}
+              className="p-3 rounded-xl bg-slate-950/60 border border-slate-800 hover:border-emerald-500/50 cursor-pointer transition-all group flex items-center justify-between"
+              title="Click to change or customize target duration"
+            >
+              <div>
+                <span className="text-slate-500 text-[11px] block flex items-center gap-1">
+                  <span>Duration</span>
+                  <span className="text-[10px] text-emerald-400 group-hover:underline">(Edit)</span>
+                </span>
+                <span className="font-semibold text-emerald-400 mt-0.5 block">{s.target_duration_minutes} Mins</span>
+              </div>
+              <Clock className="w-3.5 h-3.5 text-slate-600 group-hover:text-emerald-400 transition-colors" />
             </div>
             <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800">
               <span className="text-slate-500 text-[11px] block">Format & Aspect</span>
@@ -2718,6 +2757,139 @@ function WorkspaceContent() {
               >
                 <Sparkles className={`w-3.5 h-3.5 ${isRewriting ? "animate-spin" : ""}`} />
                 <span>{isRewriting ? "Rewriting with Gemini AI..." : "Enhance with Gemini AI"}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal 3: Target Duration Customization Modal */}
+      {showDurationModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="w-full max-w-md rounded-2xl bg-slate-950 border border-emerald-500/30 p-6 space-y-5 shadow-2xl">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center">
+                  <Clock className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-sm text-white">Customize Target Duration</h3>
+                  <span className="text-[11px] text-slate-400">Hard limit: 1 to 20 minutes</span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowDurationModal(false)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-900 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4 text-xs">
+              {/* Presets */}
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-400 mb-2">
+                  Quick Presets:
+                </label>
+                <div className="flex flex-wrap gap-1.5">
+                  {[3, 5, 8, 10, 11, 15, 20].map((m) => (
+                    <button
+                      type="button"
+                      key={m}
+                      onClick={() => setCustomProjectDuration(m)}
+                      className={`px-3 py-1.5 rounded-lg font-semibold border transition-all ${
+                        customProjectDuration === m
+                          ? "bg-emerald-600 border-emerald-500 text-white shadow-sm"
+                          : "bg-slate-900 border-slate-800 text-slate-400 hover:text-white"
+                      }`}
+                    >
+                      {m === 11 ? "★ 11 Mins" : `${m}m`}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Exact Stepper & Slider */}
+              <div className="p-3.5 rounded-xl bg-slate-900/60 border border-slate-800 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-300 font-semibold">Exact Duration:</span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setCustomProjectDuration(Math.max(1, customProjectDuration - 1))}
+                      disabled={customProjectDuration <= 1}
+                      className="w-7 h-7 rounded-lg bg-slate-800 border border-slate-700 text-slate-300 hover:text-white flex items-center justify-center font-bold disabled:opacity-40"
+                    >
+                      -
+                    </button>
+                    <input
+                      type="number"
+                      min={1}
+                      max={20}
+                      value={customProjectDuration}
+                      onChange={(e) => {
+                        const val = parseInt(e.target.value, 10);
+                        if (!isNaN(val)) setCustomProjectDuration(Math.max(1, Math.min(20, val)));
+                      }}
+                      className="w-16 px-2 py-1 rounded-lg bg-slate-950 border border-slate-700 text-white text-center font-bold text-xs focus:outline-none focus:border-emerald-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setCustomProjectDuration(Math.min(20, customProjectDuration + 1))}
+                      disabled={customProjectDuration >= 20}
+                      className="w-7 h-7 rounded-lg bg-slate-800 border border-slate-700 text-slate-300 hover:text-white flex items-center justify-center font-bold disabled:opacity-40"
+                    >
+                      +
+                    </button>
+                    <span className="text-slate-400 font-medium">Minutes</span>
+                  </div>
+                </div>
+
+                <input
+                  type="range"
+                  min={1}
+                  max={20}
+                  value={customProjectDuration}
+                  onChange={(e) => setCustomProjectDuration(parseInt(e.target.value, 10))}
+                  className="w-full h-2 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-emerald-500"
+                />
+
+                <div className="grid grid-cols-3 gap-2 pt-2 border-t border-slate-800/80 text-center text-[10px]">
+                  <div>
+                    <span className="text-slate-500 block">Paced Words</span>
+                    <span className="font-bold text-indigo-400">~{customProjectDuration * 135}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block">Scenes</span>
+                    <span className="font-bold text-emerald-400">
+                      ~{Math.max(4, Math.min(24, Math.round((customProjectDuration * 60) / 45)))}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block">Total Runtime</span>
+                    <span className="font-bold text-amber-400">{customProjectDuration * 60}s</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setShowDurationModal(false)}
+                className="px-4 py-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-900 text-xs transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={savingDuration}
+                onClick={handleSaveProjectDuration}
+                className="flex items-center gap-2 px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow-md shadow-emerald-950/40 transition-all disabled:opacity-50"
+              >
+                <CheckCircle2 className={`w-3.5 h-3.5 ${savingDuration ? "animate-spin" : ""}`} />
+                <span>{savingDuration ? "Saving..." : "Save Target Duration"}</span>
               </button>
             </div>
           </div>

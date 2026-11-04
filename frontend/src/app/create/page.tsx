@@ -26,11 +26,11 @@ export default function CreateDocumentaryPage() {
   const [desiredSceneCount, setDesiredSceneCount] = useState<number>(8);
   const [visualStrategy, setVisualStrategy] = useState("hybrid");
 
-  // Duration Validation Logic
-  const handleDurationPresetClick = (mins: number) => {
-    setIsCustomDuration(false);
-    setDuration(mins);
-    setCustomDurationInput(mins.toString());
+  // Duration Validation & Custom Timing Logic
+  const setTargetDuration = (mins: number) => {
+    const clamped = Math.max(1, Math.min(20, Math.round(mins)));
+    setDuration(clamped);
+    setCustomDurationInput(clamped.toString());
     setError(null);
   };
 
@@ -177,71 +177,133 @@ export default function CreateDocumentaryPage() {
           </div>
         </div>
 
-        {/* Step 2: Duration & Pacing (Strict 20-Min Enforced) */}
+        {/* Step 2: Target Duration & Custom Timing Control (Hard Cap: 20 Minutes) */}
         <div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-6 space-y-5">
           <div className="flex items-center justify-between">
             <h2 className="text-base font-bold text-white flex items-center gap-2">
               <Clock className="w-4 h-4 text-amber-400" />
-              2. Target Duration (Hard Maximum: 20 Minutes)
+              2. Target Duration & Pacing
             </h2>
-            <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20">
-              System Cap: 20m
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                Selected: {duration} Minutes
+              </span>
+              <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                Max Cap: 20m
+              </span>
+            </div>
           </div>
 
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-              {[5, 10, 15, 20].map((mins) => (
-                <button
-                  type="button"
-                  key={mins}
-                  onClick={() => handleDurationPresetClick(mins)}
-                  className={`py-3 px-4 rounded-xl text-sm font-semibold border transition-all ${
-                    !isCustomDuration && duration === mins
-                      ? "bg-rose-500/20 border-rose-500 text-white shadow-lg shadow-rose-950/40"
-                      : "bg-slate-950/60 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-200"
-                  }`}
-                >
-                  {mins} Minutes
-                </button>
-              ))}
-
-              <button
-                type="button"
-                onClick={() => setIsCustomDuration(true)}
-                className={`py-3 px-4 rounded-xl text-sm font-semibold border transition-all ${
-                  isCustomDuration
-                    ? "bg-rose-500/20 border-rose-500 text-white shadow-lg shadow-rose-950/40"
-                    : "bg-slate-950/60 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-200"
-                }`}
-              >
-                Custom
-              </button>
+          <div className="space-y-5">
+            {/* Quick Presets */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-400 mb-2">
+                Quick Duration Presets:
+              </label>
+              <div className="flex flex-wrap gap-2">
+                {[3, 5, 8, 10, 11, 15, 20].map((mins) => (
+                  <button
+                    type="button"
+                    key={mins}
+                    onClick={() => setTargetDuration(mins)}
+                    className={`py-2 px-3.5 rounded-xl text-xs font-semibold border transition-all ${
+                      duration === mins
+                        ? "bg-rose-500/20 border-rose-500 text-white shadow-md shadow-rose-950/40 font-bold"
+                        : "bg-slate-950/60 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-200"
+                    }`}
+                  >
+                    {mins === 11 ? "★ 11 Minutes (Custom)" : `${mins} Minutes`}
+                  </button>
+                ))}
+              </div>
             </div>
 
-            {isCustomDuration && (
-              <div className="p-4 rounded-xl bg-slate-950/60 border border-slate-800 space-y-2">
-                <label className="block text-xs font-medium text-slate-400">
-                  Custom Duration in Minutes (1 to 20):
-                </label>
-                <div className="flex items-center gap-3">
-                  <input
-                    type="number"
-                    min={1}
-                    max={20}
-                    value={customDurationInput}
-                    onChange={(e) => handleCustomDurationChange(e.target.value)}
-                    className="w-32 px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-white text-sm focus:outline-none focus:border-rose-500"
-                  />
-                  <span className="text-xs text-slate-400">minutes</span>
-                </div>
-                {duration > 20 && (
-                  <p className="text-xs text-rose-400 font-semibold mt-1">
-                    ⚠️ Maximum video duration allowed is 20 minutes. Larger videos cannot be processed.
+            {/* Custom Precision Stepper & Slider */}
+            <div className="p-4 rounded-xl bg-slate-950/70 border border-slate-800 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300">
+                    Exact Custom Duration (1 to 20 Minutes):
+                  </label>
+                  <p className="text-[11px] text-slate-500">
+                    Type any duration (e.g. 11 minutes) or use the stepper to customize your documentary length.
                   </p>
-                )}
+                </div>
+
+                {/* Number Stepper Control */}
+                <div className="flex items-center gap-1.5 self-start sm:self-auto">
+                  <button
+                    type="button"
+                    onClick={() => setTargetDuration(duration - 1)}
+                    disabled={duration <= 1}
+                    className="w-8 h-8 rounded-lg bg-slate-900 border border-slate-700 text-slate-300 hover:text-white flex items-center justify-center font-bold text-base transition-colors disabled:opacity-40"
+                    title="Decrease 1 minute"
+                  >
+                    -
+                  </button>
+
+                  <div className="relative">
+                    <input
+                      type="number"
+                      min={1}
+                      max={20}
+                      value={customDurationInput}
+                      onChange={(e) => handleCustomDurationChange(e.target.value)}
+                      className="w-20 px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-white text-center font-bold text-sm focus:outline-none focus:border-rose-500"
+                    />
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setTargetDuration(duration + 1)}
+                    disabled={duration >= 20}
+                    className="w-8 h-8 rounded-lg bg-slate-900 border border-slate-700 text-slate-300 hover:text-white flex items-center justify-center font-bold text-base transition-colors disabled:opacity-40"
+                    title="Increase 1 minute"
+                  >
+                    +
+                  </button>
+
+                  <span className="text-xs font-semibold text-slate-400 pl-1">Minutes</span>
+                </div>
               </div>
-            )}
+
+              {/* Interactive Range Slider */}
+              <div className="space-y-1.5 pt-1">
+                <input
+                  type="range"
+                  min={1}
+                  max={20}
+                  value={duration}
+                  onChange={(e) => setTargetDuration(parseInt(e.target.value, 10))}
+                  className="w-full h-2 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-rose-500"
+                />
+                <div className="flex justify-between text-[10px] text-slate-500 font-mono">
+                  <span>1 Min</span>
+                  <span>5 Mins</span>
+                  <span className="text-rose-400 font-bold">11 Mins</span>
+                  <span>15 Mins</span>
+                  <span>20 Mins (Max)</span>
+                </div>
+              </div>
+
+              {/* Dynamic Pacing Analytics Card */}
+              <div className="grid grid-cols-3 gap-2 pt-3 border-t border-slate-900 text-center">
+                <div className="p-2 rounded-lg bg-slate-900/60 border border-slate-800/80">
+                  <span className="text-[10px] text-slate-500 block">Target Word Count</span>
+                  <span className="text-xs font-bold text-indigo-400">~{duration * 135} Words</span>
+                </div>
+                <div className="p-2 rounded-lg bg-slate-900/60 border border-slate-800/80">
+                  <span className="text-[10px] text-slate-500 block">Estimated Scenes</span>
+                  <span className="text-xs font-bold text-emerald-400">
+                    ~{Math.max(4, Math.min(24, Math.round((duration * 60) / 45)))} Scenes
+                  </span>
+                </div>
+                <div className="p-2 rounded-lg bg-slate-900/60 border border-slate-800/80">
+                  <span className="text-[10px] text-slate-500 block">Total Runtime</span>
+                  <span className="text-xs font-bold text-amber-400">{duration * 60} Seconds</span>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 

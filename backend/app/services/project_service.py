@@ -68,19 +68,39 @@ class ProjectService:
 
     @staticmethod
     def update_project(db: Session, project_id: str, update_in: ProjectUpdate) -> Optional[Project]:
-        project = db.query(Project).filter(Project.id == project_id).first()
+        project = (
+            db.query(Project)
+            .options(joinedload(Project.settings))
+            .filter(Project.id == project_id)
+            .first()
+        )
         if not project:
             return None
 
         update_data = update_in.model_dump(exclude_unset=True)
+        settings_data = update_data.pop("settings", None)
+
         for field, value in update_data.items():
             setattr(project, field, value)
+
+        if settings_data:
+            if not project.settings:
+                new_setting = ProjectSetting(project_id=project.id, **settings_data)
+                db.add(new_setting)
+                project.settings = new_setting
+            else:
+                for s_field, s_val in settings_data.items():
+                    setattr(project.settings, s_field, s_val)
+
+        activity_details = {**update_data}
+        if settings_data:
+            activity_details["settings"] = settings_data
 
         activity = ProjectActivity(
             project_id=project.id,
             action_type="project_updated",
             actor="user",
-            details=update_data
+            details=activity_details
         )
         db.add(activity)
 

@@ -29,11 +29,24 @@ class ProjectCreate(BaseModel):
     description: Optional[str] = None
     settings: ProjectSettingCreate = Field(default_factory=ProjectSettingCreate)
 
+class ProjectSettingUpdate(BaseModel):
+    target_duration_minutes: Optional[int] = Field(None, ge=1, le=20, description="Target duration in minutes (max 20)")
+    language: Optional[str] = None
+    tone: Optional[str] = None
+    audience_level: Optional[str] = None
+    narration_preset: Optional[str] = None
+    scene_planning_mode: Optional[str] = None
+    desired_scene_count: Optional[int] = None
+    aspect_ratio: Optional[str] = None
+    resolution: Optional[str] = None
+    visual_strategy: Optional[str] = None
+
 class ProjectUpdate(BaseModel):
     title: Optional[str] = Field(None, min_length=1, max_length=255)
     topic: Optional[str] = Field(None, min_length=3)
     description: Optional[str] = None
     status: Optional[str] = None
+    settings: Optional[ProjectSettingUpdate] = None
 
 class ProjectSettingResponse(BaseModel):
     id: str

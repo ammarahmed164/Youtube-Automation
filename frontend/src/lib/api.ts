@@ -1,4 +1,4 @@
-import { Project, ProjectCreateInput, HealthStatus, ScriptRevisionData } from "@/types/project";
+import { Project, ProjectSettings, ProjectCreateInput, HealthStatus, ScriptRevisionData } from "@/types/project";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
 
@@ -40,7 +40,15 @@ export async function createProject(input: ProjectCreateInput): Promise<Project>
   return res.json();
 }
 
-export async function updateProject(id: string, data: Partial<Project>): Promise<Project> {
+export interface ProjectUpdateInput {
+  title?: string;
+  topic?: string;
+  description?: string;
+  status?: string;
+  settings?: Partial<ProjectSettings>;
+}
+
+export async function updateProject(id: string, data: ProjectUpdateInput): Promise<Project> {
   const res = await fetch(`${API_BASE_URL}/projects/${id}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
