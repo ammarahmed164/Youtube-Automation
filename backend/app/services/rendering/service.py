@@ -1,4 +1,5 @@
 import os
+import re
 import uuid
 import json
 import shutil
@@ -56,40 +57,230 @@ class RenderingService(BaseRenderingService):
         return f"{hours:02d}:{minutes:02d}:{secs:02d}{sep}{millis:03d}"
 
     @classmethod
+    def split_narration_into_cues(
+        cls,
+        text: str,
+        total_duration: float,
+        max_words: int = 12,
+        max_chars: int = 65
+    ) -> List[Dict[str, Any]]:
+        """
+        Splits scene narration into broadcast-grade line-by-line / phrase-by-phrase subtitle cues,
+        dynamically synchronized to speech pacing across the scene's actual audio duration.
+        Supports Urdu (۔ ، ؟), Hindi (। ॥), English, Arabic, and other languages.
+        """
+        text = (text or "").strip()
+        if not text or total_duration <= 0:
+            return []
+
+        # 1. Primary sentence splitting
+        # Split on terminal punctuation: . ! ? Urdu khatma (۔), Urdu question (؟), Hindi purna viram (। ॥), newline
+        tokens = re.split(r"([۔؟!?।॥\n]|\.(?!\d))", text)
+        raw_sentences = []
+        curr = ""
+        for t in tokens:
+            if not t:
+                continue
+            if re.match(r"^[۔؟!?।॥\n.]+$", t.strip()):
+                curr += t
+                if curr.strip():
+                    raw_sentences.append(curr.strip())
+                curr = ""
+            else:
+                curr += t
+        if curr.strip():
+            raw_sentences.append(curr.strip())
+
+        # 2. Refine sentences into comfortable broadcast lines
+        refined_lines = []
+        for sent in raw_sentences:
+            words = sent.split()
+            if len(words) <= max_words and len(sent) <= max_chars:
+                refined_lines.append(sent)
+                continue
+
+            # Split on commas / clause markers: , ، ; : — -
+            clause_tokens = re.split(r"([,،;:—\-])", sent)
+            clauses = []
+            curr_c = ""
+            for ct in clause_tokens:
+                if not ct:
+                    continue
+                if ct in ",،;:—-":
+                    curr_c += ct
+                    if curr_c.strip():
+                        clauses.append(curr_c.strip())
+                    curr_c = ""
+                else:
+                    curr_c += ct
+            if curr_c.strip():
+                clauses.append(curr_c.strip())
+
+            # Merge adjacent clauses within limits (natural subtitle phrases)
+            merged_clauses = []
+            buf = ""
+            for c in clauses:
+                test_buf = (buf + " " + c).strip() if buf else c
+                if len(test_buf.split()) <= max_words and len(test_buf) <= max_chars:
+                    buf = test_buf
+                else:
+                    if buf:
+                        merged_clauses.append(buf)
+                    buf = c
+            if buf:
+                merged_clauses.append(buf)
+
+            # Break any remaining oversized clause by words
+            for c in merged_clauses:
+                c_words = c.split()
+                if len(c_words) <= max_words and len(c) <= max_chars:
+                    refined_lines.append(c)
+                else:
+                    chunk = []
+                    for w in c_words:
+                        chunk.append(w)
+                        if len(chunk) >= (max_words - 2) or sum(len(x) + 1 for x in chunk) >= (max_chars - 10):
+                            refined_lines.append(" ".join(chunk))
+                            chunk = []
+                    if chunk:
+                        if len(chunk) <= 2 and refined_lines:
+                            refined_lines[-1] = refined_lines[-1] + " " + " ".join(chunk)
+                        else:
+                            refined_lines.append(" ".join(chunk))
+
+        # 3. Post-process smoothing: avoid awkward isolated 1-2 word fragments
+        smoothed_lines = []
+        i = 0
+        while i < len(refined_lines):
+            curr_l = refined_lines[i]
+            curr_words = curr_l.split()
+            is_short = len(curr_words) <= 3 or len(curr_l) < 18
+            ends_with_terminal = bool(re.search(r"[۔؟!?।॥\.]", curr_l))
+
+            if is_short and not ends_with_terminal and i + 1 < len(refined_lines):
+                next_l = refined_lines[i + 1]
+                combined = curr_l + " " + next_l
+                if len(combined.split()) <= (max_words + 3) and len(combined) <= (max_chars + 15):
+                    smoothed_lines.append(combined)
+                    i += 2
+                    continue
+            elif is_short and smoothed_lines:
+                combined = smoothed_lines[-1] + " " + curr_l
+                if len(combined.split()) <= (max_words + 3) and len(combined) <= (max_chars + 15):
+                    smoothed_lines[-1] = combined
+                    i += 1
+                    continue
+
+            smoothed_lines.append(curr_l)
+            i += 1
+
+        if not smoothed_lines:
+            return []
+
+        # 4. Dynamic Speech-Proportional Timing Allocation
+        weights = []
+        for line in smoothed_lines:
+            w = len(line) + (len(line.split()) * 2.8)
+            if re.search(r"[۔؟!?।॥\.]", line):
+                w += 6.0
+            elif re.search(r"[,،;:]", line):
+                w += 3.0
+            weights.append(max(w, 5.0))
+
+        total_weight = sum(weights)
+        cues = []
+        curr_t = 0.0
+
+        for idx, (line, w) in enumerate(zip(smoothed_lines, weights)):
+            if idx == len(smoothed_lines) - 1:
+                cue_dur = max(0.5, total_duration - curr_t)
+            else:
+                cue_dur = (w / total_weight) * total_duration
+
+            cue_start = curr_t
+            cue_end = curr_t + cue_dur
+            curr_t = cue_end
+
+            cues.append({
+                "start": cue_start,
+                "end": cue_end,
+                "duration": cue_dur,
+                "text": line
+            })
+
+        return cues
+
+    @classmethod
     def generate_subtitles(cls, scenes: List[Scene], output_srt: Path, output_vtt: Path) -> None:
-        """Generates synchronized .srt and .vtt subtitle tracks from scenes."""
+        """
+        Generates broadcast-grade synchronized .srt and .vtt subtitle tracks from scenes.
+        Splits each scene's narration into professional line-by-line cues synced with speech timing.
+        """
         srt_lines = []
-        vtt_lines = ["WEBVTT", ""]
+        vtt_lines = [
+            "WEBVTT",
+            "",
+            "STYLE",
+            "::cue {",
+            "  background-color: rgba(15, 23, 42, 0.88);",
+            "  color: #ffffff;",
+            "  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Nastaliq Urdu', 'Noto Sans', Arial, sans-serif;",
+            "  font-size: 1.15rem;",
+            "  font-weight: 600;",
+            "  line-height: 1.5;",
+            "  padding: 0.3em 0.8em;",
+            "  border-radius: 8px;",
+            "  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.95);",
+            "}",
+            ""
+        ]
 
         current_time = 0.0
         subtitle_index = 1
 
         for scene in scenes:
             duration = scene.actual_audio_duration_seconds or scene.estimated_duration_seconds or 5.0
-            start_time = current_time
-            end_time = current_time + duration
-            current_time = end_time
+            scene_start_time = current_time
+            scene_end_time = current_time + duration
+            current_time = scene_end_time
 
             text = (scene.narration_text or "").strip()
             if not text:
                 continue
 
-            start_srt = cls.format_timestamp(start_time, ",")
-            end_srt = cls.format_timestamp(end_time, ",")
-            start_vtt = cls.format_timestamp(start_time, ".")
-            end_vtt = cls.format_timestamp(end_time, ".")
+            # Split narration text into line-by-line synchronized cues
+            cues = cls.split_narration_into_cues(text, duration)
 
-            srt_lines.append(str(subtitle_index))
-            srt_lines.append(f"{start_srt} --> {end_srt}")
-            srt_lines.append(text)
-            srt_lines.append("")
+            if not cues:
+                cues = [{
+                    "start": 0.0,
+                    "end": duration,
+                    "duration": duration,
+                    "text": text
+                }]
 
-            vtt_lines.append(str(subtitle_index))
-            vtt_lines.append(f"{start_vtt} --> {end_vtt}")
-            vtt_lines.append(text)
-            vtt_lines.append("")
+            for cue in cues:
+                cue_start_abs = scene_start_time + cue["start"]
+                cue_end_abs = scene_start_time + cue["end"]
 
-            subtitle_index += 1
+                start_srt = cls.format_timestamp(cue_start_abs, ",")
+                end_srt = cls.format_timestamp(cue_end_abs, ",")
+                start_vtt = cls.format_timestamp(cue_start_abs, ".")
+                end_vtt = cls.format_timestamp(cue_end_abs, ".")
+
+                cue_text = cue["text"]
+
+                srt_lines.append(str(subtitle_index))
+                srt_lines.append(f"{start_srt} --> {end_srt}")
+                srt_lines.append(cue_text)
+                srt_lines.append("")
+
+                vtt_lines.append(str(subtitle_index))
+                vtt_lines.append(f"{start_vtt} --> {end_vtt}")
+                vtt_lines.append(cue_text)
+                vtt_lines.append("")
+
+                subtitle_index += 1
 
         output_srt.parent.mkdir(parents=True, exist_ok=True)
         with open(output_srt, "w", encoding="utf-8") as f:

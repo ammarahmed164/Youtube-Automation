@@ -174,6 +174,19 @@ def get_project_subtitles(
     sub_path = BASE_DIR / "workspace_data" / "projects" / project_id / "renders" / f"v{v_num}" / sub_filename
 
     if not sub_path.exists():
+        # Auto-generate synchronized subtitles if missing
+        from app.models.generation import Scene, ScriptRevision
+        from app.services.rendering.service import RenderingService
+        script = db.query(ScriptRevision).filter(ScriptRevision.project_id == project_id).order_by(ScriptRevision.revision_number.desc()).first()
+        if script:
+            scenes = db.query(Scene).filter(Scene.script_revision_id == script.id).order_by(Scene.scene_order.asc()).all()
+            if scenes:
+                sub_path.parent.mkdir(parents=True, exist_ok=True)
+                srt_path = sub_path.parent / "subtitles.srt"
+                vtt_path = sub_path.parent / "subtitles.vtt"
+                RenderingService.generate_subtitles(scenes, srt_path, vtt_path)
+
+    if not sub_path.exists():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Subtitle file '{sub_filename}' not found.")
 
     media_type = "text/vtt; charset=utf-8" if format == "vtt" else "text/plain; charset=utf-8"
@@ -186,6 +199,55 @@ def get_project_subtitles(
         filename=filename_param,
         content_disposition_type=disp
     )
+
+@router.post("/{project_id}/subtitles/regenerate")
+def regenerate_project_subtitles(
+    project_id: str,
+    version: Optional[int] = Query(None, description="Video version number to re-sync subtitles for"),
+    db: Session = Depends(get_db)
+):
+    """Regenerates line-by-line synchronized subtitles (.srt and .vtt) for the given video version without re-rendering."""
+    from app.models.generation import Scene, ScriptRevision
+    from app.services.rendering.service import RenderingService
+
+    query = db.query(VideoVersion).filter(VideoVersion.project_id == project_id)
+    if version is not None:
+        video_rec = query.filter(VideoVersion.version_number == version).first()
+    else:
+        video_rec = query.order_by(VideoVersion.version_number.desc()).first()
+
+    if not video_rec:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No rendered video found.")
+
+    script = db.query(ScriptRevision).filter(ScriptRevision.project_id == project_id).order_by(ScriptRevision.revision_number.desc()).first()
+    if not script:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No script found for project.")
+
+    scenes = db.query(Scene).filter(Scene.script_revision_id == script.id).order_by(Scene.scene_order.asc()).all()
+    if not scenes:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No scenes found.")
+
+    v_dir = BASE_DIR / "workspace_data" / "projects" / project_id / "renders" / f"v{video_rec.version_number}"
+    v_dir.mkdir(parents=True, exist_ok=True)
+    srt_path = v_dir / "subtitles.srt"
+    vtt_path = v_dir / "subtitles.vtt"
+
+    RenderingService.generate_subtitles(scenes, srt_path, vtt_path)
+
+    total_cues = sum(
+        len(RenderingService.split_narration_into_cues(
+            s.narration_text or "",
+            s.actual_audio_duration_seconds or s.estimated_duration_seconds or 5.0
+        )) for s in scenes
+    )
+
+    return {
+        "status": "success",
+        "message": f"Synchronized line-by-line subtitles successfully updated for v{video_rec.version_number}",
+        "version": video_rec.version_number,
+        "cues_count": total_cues
+    }
+
 
 @router.get("/{project_id}/versions", response_model=List[VideoVersionResponse])
 def list_video_versions(project_id: str, db: Session = Depends(get_db)):

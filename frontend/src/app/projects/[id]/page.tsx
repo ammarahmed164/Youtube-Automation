@@ -70,6 +70,7 @@ import {
   fetchRenderStatus,
   getVideoStreamUrl,
   getVideoSubtitlesUrl,
+  regenerateSubtitles,
   fetchVideoVersions,
   fetchQualityCheck,
   runQualityCheck,
@@ -175,6 +176,8 @@ function WorkspaceContent() {
   const [latestVideo, setLatestVideo] = useState<VideoVersionData | null>(null);
   const [videoVersions, setVideoVersions] = useState<VideoVersionData[]>([]);
   const [videoTimestamp, setVideoTimestamp] = useState<number>(Date.now());
+  const [isReSyncingSubtitles, setIsReSyncingSubtitles] = useState(false);
+  const [subtitleNotice, setSubtitleNotice] = useState<string | null>(null);
 
   // Phase 7 Quality Checks & AI Modification states
   const [qualityCheck, setQualityCheck] = useState<QualityCheckData | null>(null);
@@ -640,6 +643,23 @@ function WorkspaceContent() {
     } catch (err: any) {
       setIsRendering(false);
       setError(err.message || "Failed to trigger video rendering.");
+    }
+  };
+
+  const handleRegenerateSubtitles = async () => {
+    if (!latestVideo && !selectedVersionNum) return;
+    setIsReSyncingSubtitles(true);
+    setSubtitleNotice(null);
+    try {
+      const v = selectedVersionNum || latestVideo?.version_number;
+      const res = await regenerateSubtitles(projectId, v);
+      setVideoTimestamp(Date.now());
+      setSubtitleNotice(res.message || "Line-by-line synchronized subtitles updated successfully!");
+      setTimeout(() => setSubtitleNotice(null), 6000);
+    } catch (err: any) {
+      alert(err.message || "Failed to update subtitles.");
+    } finally {
+      setIsReSyncingSubtitles(false);
     }
   };
 
@@ -2055,10 +2075,11 @@ function WorkspaceContent() {
                           }}
                         >
                           <track
+                            key={`track-${selectedVersionNum || latestVideo.version_number}-${videoTimestamp}`}
                             kind="subtitles"
                             src={getVideoSubtitlesUrl(projectId, "vtt", { version: selectedVersionNum || latestVideo.version_number, t: videoTimestamp })}
-                            srcLang="en"
-                            label="English"
+                            srcLang={project?.settings?.language || "en"}
+                            label={project?.settings?.language ? `${project.settings.language.toUpperCase()} Subtitles` : "Subtitles"}
                             default
                           />
                           Your browser does not support HTML5 video streaming.
@@ -2099,6 +2120,16 @@ function WorkspaceContent() {
                           </a>
 
                           <button
+                            onClick={handleRegenerateSubtitles}
+                            disabled={isReSyncingSubtitles}
+                            title="Re-sync line-by-line synchronized subtitles immediately without full video re-render"
+                            className="flex items-center gap-2 text-xs font-semibold px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 transition-colors"
+                          >
+                            <RefreshCw className={`w-3.5 h-3.5 text-cyan-400 ${isReSyncingSubtitles ? "animate-spin" : ""}`} />
+                            <span>Re-sync Subtitles</span>
+                          </button>
+
+                          <button
                             onClick={handleStartRender}
                             disabled={isRendering}
                             className="flex items-center gap-2 text-xs font-semibold px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors"
@@ -2108,6 +2139,13 @@ function WorkspaceContent() {
                           </button>
                         </div>
                       </div>
+
+                      {subtitleNotice && (
+                        <div className="p-3 rounded-xl bg-emerald-950/60 border border-emerald-500/40 text-emerald-300 text-xs flex items-center gap-2">
+                          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                          <span>{subtitleNotice}</span>
+                        </div>
+                      )}
 
                       {/* Technical Specs & SHA-256 Checksum (Crucial for Approval Gate!) */}
                       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-3 border-t border-slate-900 text-xs">

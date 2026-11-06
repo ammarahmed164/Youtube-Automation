@@ -401,6 +401,15 @@ export async function fetchVideoVersions(projectId: string): Promise<any[]> {
   return res.json();
 }
 
+export async function regenerateSubtitles(projectId: string, version?: number): Promise<any> {
+  const q = version ? `?version=${version}` : "";
+  const res = await fetch(`${API_BASE_URL}/projects/${projectId}/subtitles/regenerate${q}`, {
+    method: "POST",
+  });
+  if (!res.ok) throw new Error(`Failed to regenerate subtitles: HTTP ${res.status}`);
+  return res.json();
+}
+
 // Phase 7: Quality Control & AI Modification APIs
 export async function fetchQualityCheck(projectId: string, version?: number): Promise<any> {
   const vParam = version ? `?version=${version}` : "";
