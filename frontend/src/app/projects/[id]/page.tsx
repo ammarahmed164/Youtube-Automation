@@ -147,6 +147,7 @@ function WorkspaceContent() {
   const [availableVoices, setAvailableVoices] = useState<VoiceOption[]>([]);
   const [selectedVoiceId, setSelectedVoiceId] = useState<string>("");
   const [isPlayingPreview, setIsPlayingPreview] = useState(false);
+  const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null);
   const [previewAudioObj, setPreviewAudioObj] = useState<HTMLAudioElement | null>(null);
   const [generatingSceneVoiceId, setGeneratingSceneVoiceId] = useState<string | null>(null);
   const [sceneSelectedVoices, setSceneSelectedVoices] = useState<Record<string, string>>({});
@@ -427,16 +428,41 @@ function WorkspaceContent() {
   };
 
   const handlePlayVoicePreview = (voiceId: string) => {
+    // If the same voice is already playing, toggle pause
+    if (previewAudioObj && isPlayingPreview && playingVoiceId === voiceId) {
+      previewAudioObj.pause();
+      setIsPlayingPreview(false);
+      setPlayingVoiceId(null);
+      return;
+    }
+
     if (previewAudioObj) {
       previewAudioObj.pause();
+      previewAudioObj.currentTime = 0;
     }
+
     const audioUrl = getVoicePreviewUrl(voiceId);
     const audio = new Audio(audioUrl);
     setPreviewAudioObj(audio);
     setIsPlayingPreview(true);
-    audio.play().catch((e) => console.error("Audio preview failed:", e));
-    audio.onended = () => setIsPlayingPreview(false);
-    audio.onerror = () => setIsPlayingPreview(false);
+    setPlayingVoiceId(voiceId);
+
+    audio.play().catch((e) => {
+      console.error("Audio preview failed:", e);
+      setIsPlayingPreview(false);
+      setPlayingVoiceId(null);
+    });
+
+    audio.onended = () => {
+      setIsPlayingPreview(false);
+      setPlayingVoiceId(null);
+    };
+
+    audio.onerror = (e) => {
+      console.error("Audio playback error:", e);
+      setIsPlayingPreview(false);
+      setPlayingVoiceId(null);
+    };
   };
 
   const handleGenerateVoice = async () => {
@@ -1299,11 +1325,15 @@ function WorkspaceContent() {
                       <button
                         type="button"
                         onClick={() => handlePlayVoicePreview(selectedVoiceId)}
-                        disabled={isPlayingPreview || !selectedVoiceId}
-                        className="p-1.5 rounded-lg bg-indigo-950 hover:bg-indigo-900 text-indigo-300 hover:text-white border border-indigo-800/40 transition-colors"
-                        title="Listen to 2-second studio sample"
+                        disabled={!selectedVoiceId}
+                        className={`p-1.5 rounded-lg border transition-colors ${
+                          playingVoiceId === selectedVoiceId
+                            ? "bg-emerald-600 text-white border-emerald-500 animate-pulse"
+                            : "bg-indigo-950 hover:bg-indigo-900 text-indigo-300 hover:text-white border-indigo-800/40"
+                        }`}
+                        title="Listen to studio voice sample"
                       >
-                        <Volume2 className={`w-3.5 h-3.5 ${isPlayingPreview ? "animate-pulse text-emerald-400" : ""}`} />
+                        <Volume2 className="w-3.5 h-3.5" />
                       </button>
                     </div>
 
@@ -1890,15 +1920,14 @@ function WorkspaceContent() {
                                     <button
                                       type="button"
                                       onClick={() => handlePlayVoicePreview(activeVoicePreset)}
-                                      disabled={isPlayingPreview}
-                                      className="p-1.5 rounded-lg bg-indigo-950/80 hover:bg-indigo-900 text-indigo-300 hover:text-white border border-indigo-800/40 transition-colors"
+                                      className={`p-1.5 rounded-lg border transition-colors ${
+                                        playingVoiceId === activeVoicePreset
+                                          ? "bg-emerald-600 text-white border-emerald-500 animate-pulse"
+                                          : "bg-indigo-950/80 hover:bg-indigo-900 text-indigo-300 hover:text-white border border-indigo-800/40"
+                                      }`}
                                       title={`Listen to sample of ${currentVoiceObj?.name || activeVoicePreset}`}
                                     >
-                                      <Volume2
-                                        className={`w-3.5 h-3.5 ${
-                                          isPlayingPreview ? "animate-pulse text-emerald-400" : ""
-                                        }`}
-                                      />
+                                      <Volume2 className="w-3.5 h-3.5" />
                                     </button>
 
                                     {/* Synthesize / Apply Voice to This Scene Button */}
@@ -3590,23 +3619,57 @@ function WorkspaceContent() {
                           <button
                             type="button"
                             onClick={() => handlePlayVoicePreview(clone.id)}
-                            disabled={isPlayingPreview}
-                            className="p-2 rounded-lg bg-indigo-950/80 hover:bg-indigo-900 text-indigo-300 hover:text-white border border-indigo-800/40 text-xs transition-colors flex items-center gap-1.5"
+                            className={`p-2 rounded-lg text-xs transition-colors flex items-center gap-1.5 border ${
+                              playingVoiceId === clone.id
+                                ? "bg-emerald-600 text-white border-emerald-500 animate-pulse"
+                                : "bg-indigo-950/80 hover:bg-indigo-900 text-indigo-300 hover:text-white border border-indigo-800/40"
+                            }`}
                             title="Listen to original voice sample"
                           >
                             <Volume2 className="w-3.5 h-3.5" />
-                            <span className="text-[11px] hidden sm:inline">Play Sample</span>
+                            <span className="text-[11px] hidden sm:inline">
+                              {playingVoiceId === clone.id ? "Playing..." : "Play Sample"}
+                            </span>
                           </button>
 
                           <button
                             type="button"
-                            onClick={() => {
+                            onClick={async () => {
                               setSelectedVoiceId(clone.id);
+                              if (script?.scenes) {
+                                const updatedMap: Record<string, string> = { ...sceneSelectedVoices };
+                                script.scenes.forEach((s) => {
+                                  updatedMap[s.id] = clone.id;
+                                });
+                                setSceneSelectedVoices(updatedMap);
+                              }
+                              if (project) {
+                                try {
+                                  const updated = await updateProject(projectId, {
+                                    settings: {
+                                      ...project.settings,
+                                      narration_preset: clone.id,
+                                    },
+                                  });
+                                  setProject(updated);
+                                } catch (e) {
+                                  console.error("Failed to persist narration preset:", e);
+                                }
+                              }
+                              if (previewAudioObj) {
+                                previewAudioObj.pause();
+                                setIsPlayingPreview(false);
+                                setPlayingVoiceId(null);
+                              }
                               setShowVoiceCloneModal(false);
                             }}
-                            className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-colors"
+                            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                              selectedVoiceId === clone.id
+                                ? "bg-emerald-500 text-white ring-2 ring-emerald-400/50"
+                                : "bg-emerald-600 hover:bg-emerald-500 text-white"
+                            }`}
                           >
-                            Use for Project
+                            {selectedVoiceId === clone.id ? "✓ Active for Project" : "Use for Project"}
                           </button>
 
                           <button

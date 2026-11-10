@@ -184,21 +184,23 @@ def delete_voice_clone(clone_id: str, db: Session = Depends(get_db)):
 @router.get("/voices/preview/{voice_id}")
 async def get_voice_preview(voice_id: str, db: Session = Depends(get_db)):
     """
-    Stream or generate a live 2-second audio preview of any selected voice.
-    For cloned voices, serves the user's reference sample audio directly!
+    Stream or generate a live audio preview of any selected voice.
+    For cloned voices, streams the user's reference sample audio directly with inline content disposition.
     """
-    if voice_id.startswith("clone_"):
-        clean_id = voice_id.replace("clone_", "").strip()
-        clone = db.query(VoiceClone).filter(VoiceClone.id == clean_id).first()
-        if not clone:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Cloned voice '{clean_id}' not found.")
+    clean_id = voice_id.replace("clone_", "").strip()
+    clone = db.query(VoiceClone).filter((VoiceClone.id == clean_id) | (VoiceClone.id == voice_id)).first()
+    if clone:
         sample_path = BASE_DIR / clone.sample_path
         if not sample_path.exists():
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cloned voice audio sample missing.")
         return FileResponse(
             path=str(sample_path),
             media_type="audio/wav",
-            filename=f"{clone.name}_sample.wav"
+            content_disposition_type="inline",
+            headers={
+                "Cache-Control": "no-cache",
+                "Accept-Ranges": "bytes"
+            }
         )
 
     voice_match = next((v for v in VOICE_CATALOG if v["id"] == voice_id), None)
@@ -223,8 +225,11 @@ async def get_voice_preview(voice_id: str, db: Session = Depends(get_db)):
     return FileResponse(
         path=str(cache_path),
         media_type="audio/wav",
-        filename=f"{voice_id}_preview.wav",
-        headers={"Cache-Control": "public, max-age=604800"}
+        content_disposition_type="inline",
+        headers={
+            "Cache-Control": "public, max-age=604800",
+            "Accept-Ranges": "bytes"
+        }
     )
 
 @router.post("/{project_id}/generate-voice", status_code=status.HTTP_200_OK)
