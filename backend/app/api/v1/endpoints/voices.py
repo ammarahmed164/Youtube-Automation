@@ -138,6 +138,7 @@ async def create_voice_clone(
             gender=gender or "neutral",
             sample_path=rel_path,
             duration_seconds=duration_seconds,
+            base_voice_id="gemini-tts-base",
             provider="gemini_replicated"
         )
         db.add(clone)
