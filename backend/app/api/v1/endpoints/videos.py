@@ -115,17 +115,26 @@ def stream_project_video(
         except Exception:
             v_int = None
 
+    video_rec = None
+    # If specific version requested, check if it exists on disk
     if v_int is not None:
-        video_rec = query.filter(VideoVersion.version_number == v_int).first()
-    else:
-        video_rec = query.order_by(VideoVersion.version_number.desc()).first()
+        cand = query.filter(VideoVersion.version_number == v_int).first()
+        if cand and (BASE_DIR / cand.file_path).exists() and (BASE_DIR / cand.file_path).stat().st_size > 1000:
+            video_rec = cand
+
+    # If requested version is missing on disk or not specified, pick latest version that ACTUALLY exists on disk
+    if not video_rec:
+        candidates = query.order_by(VideoVersion.version_number.desc()).all()
+        for cand in candidates:
+            cand_file = BASE_DIR / cand.file_path
+            if cand_file.exists() and cand_file.stat().st_size > 1000:
+                video_rec = cand
+                break
 
     if not video_rec:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No rendered video found for this project.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No rendered video file found on disk for this project.")
 
     video_file = BASE_DIR / video_rec.file_path
-    if not video_file.exists():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Rendered video file is missing from disk.")
 
     disp = "attachment" if download else "inline"
     filename_param = Path(video_rec.file_path).name if download else None
@@ -161,9 +170,20 @@ def get_project_subtitles(
         except Exception:
             v_int = None
 
+    video_rec = None
     if v_int is not None:
-        video_rec = query.filter(VideoVersion.version_number == v_int).first()
-    else:
+        cand = query.filter(VideoVersion.version_number == v_int).first()
+        if cand and (BASE_DIR / cand.file_path).exists():
+            video_rec = cand
+
+    if not video_rec:
+        candidates = query.order_by(VideoVersion.version_number.desc()).all()
+        for cand in candidates:
+            if (BASE_DIR / cand.file_path).exists():
+                video_rec = cand
+                break
+
+    if not video_rec:
         video_rec = query.order_by(VideoVersion.version_number.desc()).first()
 
     if not video_rec:
@@ -251,12 +271,17 @@ def regenerate_project_subtitles(
 
 @router.get("/{project_id}/versions", response_model=List[VideoVersionResponse])
 def list_video_versions(project_id: str, db: Session = Depends(get_db)):
-    """List all immutable video versions and SHA-256 checksums for this project."""
-    versions = (
+    """List all immutable video versions and SHA-256 checksums that exist on disk."""
+    candidates = (
         db.query(VideoVersion)
         .filter(VideoVersion.project_id == project_id)
         .order_by(VideoVersion.version_number.desc())
         .all()
     )
-    return versions
+    # Only return versions whose files actually exist on disk with valid size
+    valid_versions = [
+        v for v in candidates
+        if (BASE_DIR / v.file_path).exists() and (BASE_DIR / v.file_path).stat().st_size > 1000
+    ]
+    return valid_versions
 

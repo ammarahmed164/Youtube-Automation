@@ -288,6 +288,7 @@ function WorkspaceContent() {
           if (versions.length > 0) {
             setLatestVideo(versions[0]);
             setSelectedVersionNum(versions[0].version_number);
+            setVideoPlayerError(null);
           }
         }
 
@@ -2232,6 +2233,7 @@ function WorkspaceContent() {
                                 key={v.id}
                                 onClick={() => {
                                   setSelectedVersionNum(v.version_number);
+                                  setVideoPlayerError(null);
                                   setVideoTimestamp(Date.now());
                                 }}
                                 className={`px-3 py-1 rounded-lg font-mono font-bold transition-all ${
