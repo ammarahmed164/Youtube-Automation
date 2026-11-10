@@ -98,3 +98,22 @@ class GenerationJob(Base):
 
     project = relationship("Project", back_populates="generation_jobs")
 
+class VoiceClone(Base):
+    __tablename__ = "voice_clones"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    user_id = Column(String(36), nullable=True)
+    name = Column(String(100), nullable=False)
+    language = Column(String(50), default="All")
+    gender = Column(String(20), default="neutral")
+    sample_path = Column(String(500), nullable=False)
+    duration_seconds = Column(Float, nullable=True)
+    pitch_adjustment = Column(String(20), nullable=True)
+    rate_adjustment = Column(String(20), nullable=True)
+    base_voice_id = Column(String(100), nullable=True)
+    timbre_params = Column(JSON, nullable=True)
+    provider = Column(String(50), default="gemini_replicated")
+    external_voice_id = Column(String(100), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+
+

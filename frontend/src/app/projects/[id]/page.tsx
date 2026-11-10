@@ -42,6 +42,7 @@ import {
   Plus,
   X,
   Save,
+  Square,
 } from "lucide-react";
 import {
   fetchProjectById,
@@ -59,6 +60,9 @@ import {
   fetchVoices,
   getVoicePreviewUrl,
   VoiceOption,
+  uploadVoiceClone,
+  fetchClonedVoices,
+  deleteVoiceClone,
   generateProjectVisuals,
   uploadSceneAsset,
   resetSceneVisual,
@@ -146,6 +150,25 @@ function WorkspaceContent() {
   const [previewAudioObj, setPreviewAudioObj] = useState<HTMLAudioElement | null>(null);
   const [generatingSceneVoiceId, setGeneratingSceneVoiceId] = useState<string | null>(null);
   const [sceneSelectedVoices, setSceneSelectedVoices] = useState<Record<string, string>>({});
+
+  // Voice Cloning Modal & Audio Recording states
+  const [showVoiceCloneModal, setShowVoiceCloneModal] = useState(false);
+  const [cloneTab, setCloneTab] = useState<"record" | "upload" | "saved">("record");
+  const [cloneVoiceName, setCloneVoiceName] = useState("");
+  const [cloneVoiceLang, setCloneVoiceLang] = useState("All Languages");
+  const [cloneVoiceGender, setCloneVoiceGender] = useState("male");
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
+  const [recordedAudioBlob, setRecordedAudioBlob] = useState<Blob | null>(null);
+  const [recordedAudioUrl, setRecordedAudioUrl] = useState<string | null>(null);
+  const [uploadedAudioFile, setUploadedAudioFile] = useState<File | null>(null);
+  const [uploadedAudioUrl, setUploadedAudioUrl] = useState<string | null>(null);
+  const [isCloning, setIsCloning] = useState(false);
+  const [cloneError, setCloneError] = useState<string | null>(null);
+  const [cloneSuccessNotice, setCloneSuccessNotice] = useState<string | null>(null);
+  const [clonedVoicesList, setClonedVoicesList] = useState<any[]>([]);
+  const [deletingCloneId, setDeletingCloneId] = useState<string | null>(null);
 
   // Add Scene Modal & Creation states
   const [showAddSceneModal, setShowAddSceneModal] = useState(false);
@@ -447,6 +470,142 @@ function WorkspaceContent() {
       alert(err.message || "Failed to synthesize voice for this scene.");
     } finally {
       setGeneratingSceneVoiceId(null);
+    }
+  };
+
+  // Voice Cloning Live Audio Recording & Submission Handlers
+  useEffect(() => {
+    let interval: NodeJS.Timeout | null = null;
+    if (isRecording) {
+      interval = setInterval(() => {
+        setRecordingSeconds((prev) => prev + 1);
+      }, 1000);
+    } else {
+      if (interval) clearInterval(interval);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [isRecording]);
+
+  const loadClonedVoices = async () => {
+    try {
+      const clones = await fetchClonedVoices();
+      setClonedVoicesList(clones);
+    } catch (err) {
+      console.error("Failed to load cloned voices:", err);
+    }
+  };
+
+  const startRecording = async () => {
+    setCloneError(null);
+    setRecordedAudioBlob(null);
+    if (recordedAudioUrl) {
+      URL.revokeObjectURL(recordedAudioUrl);
+      setRecordedAudioUrl(null);
+    }
+    setRecordingSeconds(0);
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mime = MediaRecorder.isTypeSupported("audio/webm")
+        ? "audio/webm"
+        : MediaRecorder.isTypeSupported("audio/ogg")
+        ? "audio/ogg"
+        : "";
+      const recorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+      const chunks: BlobPart[] = [];
+
+      recorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) chunks.push(e.data);
+      };
+
+      recorder.onstop = () => {
+        const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
+        setRecordedAudioBlob(blob);
+        const url = URL.createObjectURL(blob);
+        setRecordedAudioUrl(url);
+        stream.getTracks().forEach((track) => track.stop());
+      };
+
+      recorder.start(250);
+      setMediaRecorder(recorder);
+      setIsRecording(true);
+    } catch (err: any) {
+      console.error("Microphone access error:", err);
+      setCloneError("Could not access microphone. Please grant microphone permissions in your browser or upload an audio file.");
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorder && mediaRecorder.state !== "inactive") {
+      mediaRecorder.stop();
+      setIsRecording(false);
+    }
+  };
+
+  const handleSubmitVoiceClone = async () => {
+    if (!cloneVoiceName.trim()) {
+      setCloneError("Please enter a name for your cloned voice.");
+      return;
+    }
+    const audioToUse = cloneTab === "record" ? recordedAudioBlob : uploadedAudioFile;
+    if (!audioToUse) {
+      setCloneError(cloneTab === "record" ? "Please record your voice first." : "Please choose an audio file to upload.");
+      return;
+    }
+    if (cloneTab === "record" && recordingSeconds < 2) {
+      setCloneError("Recording is too short. Please speak for at least 5 to 10 seconds.");
+      return;
+    }
+
+    setIsCloning(true);
+    setCloneError(null);
+    setCloneSuccessNotice(null);
+    try {
+      const res = await uploadVoiceClone(cloneVoiceName.trim(), audioToUse, cloneVoiceLang, cloneVoiceGender);
+      setCloneSuccessNotice(`Success! "${res.voice.name}" has been cloned and added to your available voices!`);
+      
+      const vList = await fetchVoices();
+      setAvailableVoices(vList);
+      
+      setSelectedVoiceId(res.voice.id);
+      
+      const clones = await fetchClonedVoices();
+      setClonedVoicesList(clones);
+      
+      setCloneVoiceName("");
+      setRecordedAudioBlob(null);
+      if (recordedAudioUrl) URL.revokeObjectURL(recordedAudioUrl);
+      setRecordedAudioUrl(null);
+      setUploadedAudioFile(null);
+      if (uploadedAudioUrl) URL.revokeObjectURL(uploadedAudioUrl);
+      setUploadedAudioUrl(null);
+      setRecordingSeconds(0);
+      setCloneTab("saved");
+    } catch (err: any) {
+      setCloneError(err.message || "Failed to clone voice.");
+    } finally {
+      setIsCloning(false);
+    }
+  };
+
+  const handleDeleteVoiceClone = async (cloneId: string) => {
+    if (!confirm("Are you sure you want to delete this cloned voice?")) return;
+    setDeletingCloneId(cloneId);
+    try {
+      await deleteVoiceClone(cloneId);
+      const vList = await fetchVoices();
+      setAvailableVoices(vList);
+      const clones = await fetchClonedVoices();
+      setClonedVoicesList(clones);
+      if (selectedVoiceId === cloneId) {
+        setSelectedVoiceId("ur-PK-AsadNeural");
+      }
+    } catch (err: any) {
+      alert(err.message || "Failed to delete cloned voice.");
+    } finally {
+      setDeletingCloneId(null);
     }
   };
 
@@ -1114,13 +1273,28 @@ function WorkspaceContent() {
                       <select
                         value={selectedVoiceId}
                         onChange={(e) => setSelectedVoiceId(e.target.value)}
-                        className="bg-slate-900 border border-slate-700 text-xs text-white rounded-lg px-2 py-1.5 focus:outline-none focus:border-indigo-500 max-w-[190px] truncate"
+                        className="bg-slate-900 border border-slate-700 text-xs text-white rounded-lg px-2 py-1.5 focus:outline-none focus:border-indigo-500 max-w-[210px] truncate"
                       >
-                        {availableVoices.map((v) => (
-                          <option key={v.id} value={v.id}>
-                            {v.name} ({v.language} - {v.gender})
-                          </option>
-                        ))}
+                        {availableVoices.some((v) => v.is_cloned) && (
+                          <optgroup label="🌟 My Cloned Voices (AI Replicated)">
+                            {availableVoices
+                              .filter((v) => v.is_cloned)
+                              .map((v) => (
+                                <option key={v.id} value={v.id}>
+                                  {v.name}
+                                </option>
+                              ))}
+                          </optgroup>
+                        )}
+                        <optgroup label="Standard Studio Voices">
+                          {availableVoices
+                            .filter((v) => !v.is_cloned)
+                            .map((v) => (
+                              <option key={v.id} value={v.id}>
+                                {v.name} ({v.language} - {v.gender})
+                              </option>
+                            ))}
+                        </optgroup>
                       </select>
                       <button
                         type="button"
@@ -1132,6 +1306,20 @@ function WorkspaceContent() {
                         <Volume2 className={`w-3.5 h-3.5 ${isPlayingPreview ? "animate-pulse text-emerald-400" : ""}`} />
                       </button>
                     </div>
+
+                    {/* Clone My Voice Studio Button */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowVoiceCloneModal(true);
+                        loadClonedVoices();
+                      }}
+                      className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-500 hover:from-emerald-500 hover:to-teal-400 text-white text-xs font-semibold shadow-md shadow-emerald-950/50 transition-all border border-emerald-400/30 hover:scale-[1.02]"
+                      title="Record or upload audio to clone your voice"
+                    >
+                      <Sparkles className="w-3.5 h-3.5 text-yellow-300 animate-pulse" />
+                      <span>Clone My Voice</span>
+                    </button>
 
                     <button
                       onClick={handleGenerateVoice}
@@ -1641,9 +1829,20 @@ function WorkspaceContent() {
                                       }
                                       className="flex-1 min-w-[190px] bg-slate-950 border border-slate-700 hover:border-indigo-500 text-xs text-white rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-indigo-500 font-sans truncate"
                                     >
+                                      {availableVoices.some((v) => v.is_cloned) && (
+                                        <optgroup label="🌟 My Cloned Voices (AI Replicated)">
+                                          {availableVoices
+                                            .filter((v) => v.is_cloned)
+                                            .map((v) => (
+                                              <option key={v.id} value={v.id}>
+                                                {v.name} ({v.language} &bull; {v.gender})
+                                              </option>
+                                            ))}
+                                        </optgroup>
+                                      )}
                                       <optgroup label="Urdu Voices (اردو)">
                                         {availableVoices
-                                          .filter((v) => v.language.toLowerCase() === "urdu")
+                                          .filter((v) => !v.is_cloned && v.language.toLowerCase() === "urdu")
                                           .map((v) => (
                                             <option key={v.id} value={v.id}>
                                               {v.name} ({v.locale.includes("PK") ? "Pakistan" : "India"} &bull;{" "}
@@ -1653,7 +1852,7 @@ function WorkspaceContent() {
                                       </optgroup>
                                       <optgroup label="Hindi Voices (हिंदी)">
                                         {availableVoices
-                                          .filter((v) => v.language.toLowerCase() === "hindi")
+                                          .filter((v) => !v.is_cloned && v.language.toLowerCase() === "hindi")
                                           .map((v) => (
                                             <option key={v.id} value={v.id}>
                                               {v.name} ({v.tone.split(" ")[0]} {v.gender})
@@ -1662,7 +1861,7 @@ function WorkspaceContent() {
                                       </optgroup>
                                       <optgroup label="English Voices (US / UK)">
                                         {availableVoices
-                                          .filter((v) => v.language.toLowerCase() === "english")
+                                          .filter((v) => !v.is_cloned && v.language.toLowerCase() === "english")
                                           .map((v) => (
                                             <option key={v.id} value={v.id}>
                                               {v.name} ({v.locale.includes("GB") ? "BBC UK" : "US"} &bull;{" "}
@@ -1674,6 +1873,7 @@ function WorkspaceContent() {
                                         {availableVoices
                                           .filter(
                                             (v) =>
+                                              !v.is_cloned &&
                                               !["urdu", "hindi", "english"].includes(
                                                 v.language.toLowerCase()
                                               )
@@ -3073,6 +3273,389 @@ function WorkspaceContent() {
                 <CheckCircle2 className={`w-3.5 h-3.5 ${savingDuration ? "animate-spin" : ""}`} />
                 <span>{savingDuration ? "Saving..." : "Save Target Duration"}</span>
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* Phase 5.5: AI Voice Cloning Studio Modal (Zero-Shot Neural Replication) */}
+      {/* ========================================================================= */}
+      {showVoiceCloneModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-in fade-in">
+          <div className="relative w-full max-w-2xl bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between p-5 border-b border-slate-800 bg-gradient-to-r from-slate-900 via-slate-900/90 to-indigo-950/40">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-500 text-white shadow-lg shadow-emerald-950/40">
+                  <Sparkles className="w-5 h-5 text-amber-200" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white flex items-center gap-2">
+                    AI Voice Cloning Studio
+                    <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                      Neural Zero-Shot
+                    </span>
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    Record 5-15 seconds of your speech to clone your authentic voice for documentary narration.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  stopRecording();
+                  setShowVoiceCloneModal(false);
+                  setCloneError(null);
+                  setCloneSuccessNotice(null);
+                }}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Tabs */}
+            <div className="flex items-center gap-1 px-5 pt-3 border-b border-slate-800 bg-slate-950/50">
+              <button
+                type="button"
+                onClick={() => {
+                  setCloneTab("record");
+                  setCloneError(null);
+                }}
+                className={`flex items-center gap-2 px-4 py-2.5 border-b-2 text-xs font-semibold transition-all ${
+                  cloneTab === "record"
+                    ? "border-emerald-500 text-emerald-400 bg-emerald-500/5"
+                    : "border-transparent text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                <Mic className="w-3.5 h-3.5" />
+                <span>Record with Mic</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setCloneTab("upload");
+                  setCloneError(null);
+                }}
+                className={`flex items-center gap-2 px-4 py-2.5 border-b-2 text-xs font-semibold transition-all ${
+                  cloneTab === "upload"
+                    ? "border-emerald-500 text-emerald-400 bg-emerald-500/5"
+                    : "border-transparent text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                <UploadCloud className="w-3.5 h-3.5" />
+                <span>Upload Audio File</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setCloneTab("saved");
+                  loadClonedVoices();
+                  setCloneError(null);
+                }}
+                className={`flex items-center gap-2 px-4 py-2.5 border-b-2 text-xs font-semibold transition-all ${
+                  cloneTab === "saved"
+                    ? "border-emerald-500 text-emerald-400 bg-emerald-500/5"
+                    : "border-transparent text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                <Layers className="w-3.5 h-3.5" />
+                <span>Saved Clones ({clonedVoicesList.length})</span>
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 overflow-y-auto space-y-5">
+              {cloneError && (
+                <div className="p-3.5 rounded-xl bg-red-950/60 border border-red-800/80 text-red-200 text-xs flex items-start gap-2.5">
+                  <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+                  <span>{cloneError}</span>
+                </div>
+              )}
+
+              {cloneSuccessNotice && (
+                <div className="p-3.5 rounded-xl bg-emerald-950/60 border border-emerald-800/80 text-emerald-200 text-xs flex items-start gap-2.5">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                  <span>{cloneSuccessNotice}</span>
+                </div>
+              )}
+
+              {/* Tab: Record with Mic */}
+              {cloneTab === "record" && (
+                <div className="space-y-5">
+                  {/* Recording Studio Box */}
+                  <div className="p-6 rounded-2xl bg-slate-950 border border-slate-800/80 flex flex-col items-center justify-center text-center space-y-4">
+                    {isRecording ? (
+                      <div className="flex flex-col items-center gap-3">
+                        <div className="relative flex items-center justify-center">
+                          <div className="w-20 h-20 rounded-full bg-red-500/20 animate-ping absolute inset-0 m-auto" />
+                          <button
+                            type="button"
+                            onClick={stopRecording}
+                            className="relative w-16 h-16 rounded-full bg-red-600 hover:bg-red-500 text-white flex items-center justify-center shadow-lg shadow-red-900/50 transition-all hover:scale-105"
+                            title="Stop Recording"
+                          >
+                            <Square className="w-6 h-6 fill-current" />
+                          </button>
+                        </div>
+                        <div className="space-y-1">
+                          <span className="text-red-400 text-sm font-bold font-mono tracking-wider animate-pulse flex items-center gap-1.5 justify-center">
+                            <span className="w-2 h-2 rounded-full bg-red-500 inline-block"></span>
+                            RECORDING LIVE: {recordingSeconds}s
+                          </span>
+                          <p className="text-xs text-slate-400">
+                            Speak clearly into your microphone:{" "}
+                            <span className="text-slate-300 italic">"Welcome to today's documentary. Let's explore the historical events..."</span>
+                          </p>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={startRecording}
+                          className="w-16 h-16 rounded-full bg-gradient-to-tr from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 text-white flex items-center justify-center shadow-lg shadow-emerald-950/50 transition-all hover:scale-105"
+                          title="Start Recording"
+                        >
+                          <Mic className="w-7 h-7" />
+                        </button>
+                        <div className="space-y-1">
+                          <span className="text-sm font-semibold text-white">
+                            {recordedAudioBlob ? "Re-Record Voice Sample" : "Click to Start Recording"}
+                          </span>
+                          <p className="text-xs text-slate-400 max-w-sm">
+                            Speak in your natural speaking tone for 5 to 15 seconds. High clarity produces pristine studio narration.
+                          </p>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Recorded Audio Playback */}
+                    {recordedAudioUrl && !isRecording && (
+                      <div className="w-full pt-4 border-t border-slate-800 space-y-2">
+                        <div className="flex items-center justify-between text-xs text-slate-400 px-1">
+                          <span className="font-semibold text-emerald-400 flex items-center gap-1">
+                            <CheckCircle2 className="w-3.5 h-3.5" /> Sample Captured ({recordingSeconds}s)
+                          </span>
+                          <span className="text-[11px] text-slate-500">Ready to clone</span>
+                        </div>
+                        <audio controls src={recordedAudioUrl} className="w-full h-9 rounded-lg accent-emerald-500" />
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Metadata Configuration */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="sm:col-span-2 space-y-1.5">
+                      <label className="text-xs font-semibold text-slate-300">Voice Profile Name *</label>
+                      <input
+                        type="text"
+                        value={cloneVoiceName}
+                        onChange={(e) => setCloneVoiceName(e.target.value)}
+                        placeholder="e.g. My Studio Voice, Hamza Urdu Narration"
+                        className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 font-medium"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-semibold text-slate-300">Target Language</label>
+                      <select
+                        value={cloneVoiceLang}
+                        onChange={(e) => setCloneVoiceLang(e.target.value)}
+                        className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-xs text-white focus:outline-none focus:border-emerald-500"
+                      >
+                        <option value="All Languages">All Languages (Universal)</option>
+                        <option value="Urdu">Urdu (اردو)</option>
+                        <option value="Hindi">Hindi (हिंदी)</option>
+                        <option value="English">English</option>
+                        <option value="Arabic">Arabic (العربية)</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Tab: Upload Audio File */}
+              {cloneTab === "upload" && (
+                <div className="space-y-5">
+                  <div className="p-6 rounded-2xl bg-slate-950 border-2 border-dashed border-slate-800 hover:border-emerald-500/60 transition-colors flex flex-col items-center justify-center text-center space-y-3">
+                    <UploadCloud className="w-10 h-10 text-emerald-400" />
+                    <div className="space-y-1">
+                      <p className="text-sm font-semibold text-white">Upload Audio Sample</p>
+                      <p className="text-xs text-slate-400">
+                        Supports WAV, MP3, M4A, WEBM, or OGG (Recommended: 5-30s clean speech)
+                      </p>
+                    </div>
+                    <input
+                      type="file"
+                      accept="audio/*,.wav,.mp3,.m4a,.webm,.ogg"
+                      id="voice-file-upload"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          setUploadedAudioFile(file);
+                          if (uploadedAudioUrl) URL.revokeObjectURL(uploadedAudioUrl);
+                          setUploadedAudioUrl(URL.createObjectURL(file));
+                          if (!cloneVoiceName) {
+                            setCloneVoiceName(file.name.replace(/\.[^/.]+$/, ""));
+                          }
+                        }
+                      }}
+                    />
+                    <label
+                      htmlFor="voice-file-upload"
+                      className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold cursor-pointer transition-all border border-slate-700"
+                    >
+                      {uploadedAudioFile ? "Choose Different File" : "Browse Audio File"}
+                    </label>
+
+                    {uploadedAudioFile && (
+                      <div className="w-full pt-4 border-t border-slate-800 space-y-2 text-left">
+                        <div className="flex items-center justify-between text-xs text-slate-300">
+                          <span className="font-mono text-emerald-400 truncate max-w-xs">{uploadedAudioFile.name}</span>
+                          <span className="text-slate-500 font-mono">
+                            {(uploadedAudioFile.size / 1024).toFixed(1)} KB
+                          </span>
+                        </div>
+                        {uploadedAudioUrl && (
+                          <audio controls src={uploadedAudioUrl} className="w-full h-9 rounded-lg accent-emerald-500" />
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Metadata Configuration */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="sm:col-span-2 space-y-1.5">
+                      <label className="text-xs font-semibold text-slate-300">Voice Profile Name *</label>
+                      <input
+                        type="text"
+                        value={cloneVoiceName}
+                        onChange={(e) => setCloneVoiceName(e.target.value)}
+                        placeholder="e.g. Documentary Host Clone"
+                        className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 font-medium"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-semibold text-slate-300">Target Language</label>
+                      <select
+                        value={cloneVoiceLang}
+                        onChange={(e) => setCloneVoiceLang(e.target.value)}
+                        className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-xs text-white focus:outline-none focus:border-emerald-500"
+                      >
+                        <option value="All Languages">All Languages (Universal)</option>
+                        <option value="Urdu">Urdu (اردو)</option>
+                        <option value="Hindi">Hindi (हिंदी)</option>
+                        <option value="English">English</option>
+                        <option value="Arabic">Arabic (العربية)</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Tab: Saved Clones */}
+              {cloneTab === "saved" && (
+                <div className="space-y-3">
+                  {clonedVoicesList.length === 0 ? (
+                    <div className="p-8 text-center rounded-2xl bg-slate-950 border border-slate-800 space-y-2">
+                      <Mic className="w-8 h-8 text-slate-600 mx-auto" />
+                      <p className="text-xs text-slate-400">No cloned voices created yet.</p>
+                      <p className="text-[11px] text-slate-500">
+                        Switch to "Record with Mic" or "Upload Audio File" to create your first voice profile.
+                      </p>
+                    </div>
+                  ) : (
+                    clonedVoicesList.map((clone) => (
+                      <div
+                        key={clone.id}
+                        className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 hover:border-slate-700 flex items-center justify-between gap-3 transition-colors"
+                      >
+                        <div className="space-y-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="font-semibold text-xs text-white truncate">{clone.name}</span>
+                            <span className="px-2 py-0.5 rounded-md text-[10px] font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                              {clone.language || "Universal"}
+                            </span>
+                            <span className="text-[11px] text-slate-500 font-mono">
+                              {clone.duration_seconds ? `${clone.duration_seconds.toFixed(1)}s` : ""}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-slate-400 font-mono">ID: {clone.id}</p>
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => handlePlayVoicePreview(clone.id)}
+                            disabled={isPlayingPreview}
+                            className="p-2 rounded-lg bg-indigo-950/80 hover:bg-indigo-900 text-indigo-300 hover:text-white border border-indigo-800/40 text-xs transition-colors flex items-center gap-1.5"
+                            title="Listen to original voice sample"
+                          >
+                            <Volume2 className="w-3.5 h-3.5" />
+                            <span className="text-[11px] hidden sm:inline">Play Sample</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedVoiceId(clone.id);
+                              setShowVoiceCloneModal(false);
+                            }}
+                            className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-colors"
+                          >
+                            Use for Project
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteVoiceClone(clone.id)}
+                            disabled={deletingCloneId === clone.id}
+                            className="p-2 rounded-lg bg-red-950/40 hover:bg-red-900 text-red-400 hover:text-white border border-red-800/40 text-xs transition-colors disabled:opacity-50"
+                            title="Delete this voice clone"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="flex items-center justify-between p-4 border-t border-slate-800 bg-slate-950/90">
+              <span className="text-[11px] text-slate-500 hidden sm:inline">
+                Powered by Neural Voice Replication (24kHz Studio Quality)
+              </span>
+
+              <div className="flex items-center gap-2 ml-auto">
+                <button
+                  type="button"
+                  onClick={() => {
+                    stopRecording();
+                    setShowVoiceCloneModal(false);
+                  }}
+                  className="px-4 py-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-900 text-xs transition-colors"
+                >
+                  Close
+                </button>
+
+                {cloneTab !== "saved" && (
+                  <button
+                    type="button"
+                    disabled={isCloning || isRecording}
+                    onClick={handleSubmitVoiceClone}
+                    className="flex items-center gap-2 px-5 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 text-white text-xs font-semibold shadow-md shadow-emerald-950/50 transition-all disabled:opacity-50"
+                  >
+                    <Sparkles className={`w-3.5 h-3.5 ${isCloning ? "animate-spin" : ""}`} />
+                    <span>{isCloning ? "Cloning & Replicating..." : "Clone My Voice & Save"}</span>
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </div>

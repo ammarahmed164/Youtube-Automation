@@ -283,6 +283,135 @@ class PiperTTSService(BaseTTSService):
                 except Exception:
                     pass
 
+    @classmethod
+    async def synthesize_cloned_voice_wav(
+        cls,
+        text: str,
+        clone_id: str,
+        output_path: Path,
+        language: str = "English"
+    ) -> Dict[str, Any]:
+        """
+        Synthesizes high-fidelity custom narration using Google Gemini Zero-Shot Voice Replication.
+        Clones user's pitch, timbre, vocal tract, and cadence directly from reference audio.
+        """
+        from app.core.database import SessionLocal
+        from app.models.generation import VoiceClone
+        from google import genai
+        from google.genai import types
+
+        clean_id = clone_id.replace("clone_", "").strip()
+        db = SessionLocal()
+        try:
+            clone_rec = db.query(VoiceClone).filter(VoiceClone.id == clean_id).first()
+        finally:
+            db.close()
+
+        if not clone_rec:
+            raise ValueError(f"Voice Clone '{clean_id}' not found in database.")
+
+        sample_file = BASE_DIR / clone_rec.sample_path
+        if not sample_file.exists():
+            raise FileNotFoundError(f"Reference voice sample file missing: {sample_file}")
+
+        sample_bytes = sample_file.read_bytes()
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_wav = output_path.with_suffix(".temp_gemini.wav")
+
+        keys = settings.get_gemini_keys()
+        if not keys and settings.GEMINI_API_KEY:
+            keys = [settings.GEMINI_API_KEY]
+
+        if not keys:
+            raise ValueError("GEMINI_API_KEY not configured for voice cloning synthesis.")
+
+        # Candidate models with automatic failover
+        tts_models = ["gemini-3.8-flash-tts", "gemini-2.5-flash-preview-tts"]
+        audio_bytes = None
+        mime_type = None
+        last_error = None
+
+        for model_name in tts_models:
+            for key in keys:
+                try:
+                    client = genai.Client(api_key=key)
+                    cfg = types.GenerateContentConfig(
+                        response_modalities=["AUDIO"],
+                        speech_config=types.SpeechConfig(
+                            voice_config=types.VoiceConfig(
+                                replicated_voice_config=types.ReplicatedVoiceConfig(
+                                    mime_type="audio/wav",
+                                    voice_sample_audio=sample_bytes,
+                                    consent_audio=sample_bytes
+                                )
+                            )
+                        )
+                    )
+                    resp = client.models.generate_content(
+                        model=model_name,
+                        contents=text,
+                        config=cfg
+                    )
+                    if resp.candidates and resp.candidates[0].content and resp.candidates[0].content.parts:
+                        part = resp.candidates[0].content.parts[0]
+                        if part.inline_data and part.inline_data.data:
+                            audio_bytes = part.inline_data.data
+                            mime_type = part.inline_data.mime_type or "audio/wav"
+                            logger.info(f"Successfully synthesized cloned voice with model '{model_name}'!")
+                            break
+                except Exception as e:
+                    last_error = e
+                    logger.warning(f"Voice clone generation attempt failed on {model_name}: {e}")
+                    continue
+            if audio_bytes:
+                break
+
+        if not audio_bytes:
+            raise RuntimeError(f"Voice clone synthesis failed across all Gemini keys: {last_error}")
+
+        # Check if returned bytes have RIFF header or raw PCM
+        if audio_bytes.startswith(b"RIFF"):
+            with open(temp_wav, "wb") as f:
+                f.write(audio_bytes)
+        else:
+            # Wrap raw 24kHz 16-bit mono PCM into standard WAV
+            with wave.open(str(temp_wav), "wb") as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(24000)
+                wf.writeframes(audio_bytes)
+
+        # Standardize to 22050Hz mono WAV using FFmpeg
+        ffmpeg_bin = settings.get_ffmpeg_path()
+        cmd = [
+            ffmpeg_bin, "-y",
+            "-i", str(temp_wav),
+            "-ar", "22050",
+            "-ac", "1",
+            str(output_path)
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        if temp_wav.exists():
+            try:
+                temp_wav.unlink()
+            except Exception:
+                pass
+
+        if res.returncode != 0:
+            raise RuntimeError(f"FFmpeg audio conversion failed: {res.stderr[-200:]}")
+
+        with wave.open(str(output_path), "rb") as wf:
+            frames = wf.getnframes()
+            rate = wf.getframerate()
+            duration_seconds = round(frames / float(rate), 2)
+
+        return {
+            "file_path": str(output_path.relative_to(BASE_DIR)),
+            "duration_seconds": duration_seconds,
+            "sample_rate": rate,
+            "voice_preset": clone_id
+        }
+
     async def synthesize_scene(
         self,
         scene_id: str,
@@ -293,6 +422,7 @@ class PiperTTSService(BaseTTSService):
     ) -> Dict[str, Any]:
         """
         Synthesizes high-fidelity speech for a scene:
+        0. If voice_preset is a Cloned Voice ('clone_...'), uses Gemini Neural Voice Replication.
         1. If voice_preset is an Edge-TTS neural voice (e.g. ur-PK-AsadNeural, hi-IN-MadhurNeural, en-US-ChristopherNeural),
            uses Microsoft Edge Neural TTS for ultra-natural, deep documentary narration.
         2. If Piper offline model is requested (English), runs local Piper ONNX.
@@ -301,6 +431,22 @@ class PiperTTSService(BaseTTSService):
         """
         output_path.parent.mkdir(parents=True, exist_ok=True)
         lang_lower = (language or "English").lower()
+
+        # 0. Check for Cloned Voice
+        if voice_preset and (voice_preset.startswith("clone_") or voice_preset.startswith("custom_")):
+            try:
+                logger.info(f"Synthesizing scene {scene_id} with Cloned Voice: {voice_preset}")
+                meta = await self.synthesize_cloned_voice_wav(
+                    text=text,
+                    clone_id=voice_preset,
+                    output_path=output_path,
+                    language=language
+                )
+                meta["scene_id"] = scene_id
+                meta["voice_preset"] = voice_preset
+                return meta
+            except Exception as e:
+                logger.error(f"Cloned voice synthesis failed for scene {scene_id}: {e}. Falling back to neural preset...")
 
         # Determine target Edge-TTS voice based on preset or language
         edge_voice_id = None

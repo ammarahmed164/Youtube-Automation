@@ -107,9 +107,59 @@ export interface VoiceOption {
   name: string;
   language: string;
   locale: string;
-  gender: "male" | "female";
+  gender: "male" | "female" | "neutral" | string;
   tone: string;
   preview_text: string;
+  is_cloned?: boolean;
+}
+
+export interface ClonedVoiceData {
+  id: string;
+  raw_id: string;
+  name: string;
+  language: string;
+  gender: string;
+  duration_seconds: number;
+  provider: string;
+  created_at?: string;
+  is_cloned: boolean;
+}
+
+export async function uploadVoiceClone(
+  name: string,
+  audioFile: Blob | File,
+  language: string = "All Languages",
+  gender: string = "neutral"
+): Promise<{ status: string; message: string; voice: ClonedVoiceData }> {
+  const formData = new FormData();
+  formData.append("name", name);
+  formData.append("file", audioFile, audioFile instanceof File ? audioFile.name : "recording.webm");
+  formData.append("language", language);
+  formData.append("gender", gender);
+
+  const res = await fetch(`${API_BASE_URL}/projects/voices/clone`, {
+    method: "POST",
+    body: formData,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Voice cloning failed: HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function fetchClonedVoices(): Promise<ClonedVoiceData[]> {
+  const res = await fetch(`${API_BASE_URL}/projects/voices/clones`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Failed to fetch cloned voices: HTTP ${res.status}`);
+  return res.json();
+}
+
+export async function deleteVoiceClone(cloneId: string): Promise<{ status: string; message: string }> {
+  const res = await fetch(`${API_BASE_URL}/projects/voices/clones/${encodeURIComponent(cloneId)}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) throw new Error(`Failed to delete cloned voice: HTTP ${res.status}`);
+  return res.json();
 }
 
 export async function fetchVoices(language?: string): Promise<VoiceOption[]> {
