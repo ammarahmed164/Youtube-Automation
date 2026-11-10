@@ -28,7 +28,15 @@ export default function DashboardPage() {
     async function loadData() {
       try {
         const [projData, healthData] = await Promise.allSettled([fetchProjects(), fetchHealth()]);
-        if (projData.status === "fulfilled") setProjects(projData.value);
+        if (projData.status === "fulfilled") {
+          setProjects(projData.value);
+        } else {
+          console.error("fetchProjects failed:", projData.reason);
+          setError(
+            projData.reason?.message ||
+              "Could not connect to FastAPI backend at http://localhost:8000. Please make sure the backend server is running."
+          );
+        }
         if (healthData.status === "fulfilled") setHealth(healthData.value);
       } catch (err: any) {
         setError(err.message || "Failed to load dashboard data");
